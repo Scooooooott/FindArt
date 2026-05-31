@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
+addopts = "-q"
+markers = [
+    "real_api: tests that call live museum/Wiki APIs and are skipped unless FINDART_RUN_REAL_API_TESTS=1",
+]
