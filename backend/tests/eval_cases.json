@@ -1,0 +1,74 @@
+[
+  {
+    "input": "维米尔戴珍珠耳环的女孩",
+    "expected_title": "Girl with a Pearl Earring",
+    "expected_artist": "Vermeer",
+    "category": "精确描述"
+  },
+  {
+    "input": "梵高的星月夜",
+    "expected_title": "The Starry Night",
+    "expected_artist": "van Gogh",
+    "category": "精确描述"
+  },
+  {
+    "input": "达芬奇蒙娜丽莎",
+    "expected_title": "Mona Lisa",
+    "expected_artist": "Leonardo",
+    "category": "精确描述"
+  },
+  {
+    "input": "那幅融化的时钟",
+    "expected_title": "The Persistence of Memory",
+    "expected_artist": "Dalí",
+    "category": "中文俚称"
+  },
+  {
+    "input": "呐喊 蒙克",
+    "expected_title": "The Scream",
+    "expected_artist": "Munch",
+    "category": "精确描述"
+  },
+  {
+    "input": "梵高的向日葵",
+    "expected_title": "Sunflowers",
+    "expected_artist": "van Gogh",
+    "category": "精确描述"
+  },
+  {
+    "input": "日本浮世绘大海浪",
+    "expected_title": "The Great Wave",
+    "expected_artist": "Hokusai",
+    "category": "中文俚称"
+  },
+  {
+    "input": "Girl with a Pearl Earring",
+    "expected_title": "Girl with a Pearl Earring",
+    "expected_artist": "Vermeer",
+    "category": "英文输入"
+  },
+  {
+    "input": "莫奈的荷花池",
+    "expected_title": null,
+    "expected_artist": "Monet",
+    "category": "模糊描述"
+  },
+  {
+    "input": "蓝色系的忧郁人物画",
+    "expected_title": null,
+    "expected_artist": "Picasso",
+    "category": "模糊描述"
+  },
+  {
+    "input": "伦勃朗夜巡",
+    "expected_title": "The Night Watch",
+    "expected_artist": "Rembrandt",
+    "category": "精确描述"
+  },
+  {
+    "input": "达芬奇画的女人戴珍珠耳环",
+    "expected_title": "Girl with a Pearl Earring",
+    "expected_artist": "Vermeer",
+    "category": "记忆有误"
+  }
+]

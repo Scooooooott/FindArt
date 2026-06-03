@@ -21,7 +21,7 @@ def test_search_uses_default_catalog_for_known_artwork() -> None:
     assert response.candidates
     assert response.candidates[0].title == "Girl with a Pearl Earring"
     assert "default_catalog" in response.diagnostics.providers
-    assert "default_vector" in response.diagnostics.providers
+    assert "qdrant_vector" in response.diagnostics.providers
 
 
 def test_resolve_image_from_candidate() -> None:

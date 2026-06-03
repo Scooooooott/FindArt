@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from collections.abc import Sequence
 from typing import Protocol
@@ -8,6 +9,16 @@ from typing import Protocol
 from app.data.default_catalog import DEFAULT_CATALOG
 from app.models import ArtworkCandidate, ArtworkQuery
 from app.providers import AicProvider, CmaProvider, MetProvider, RijksProvider, WikiProvider
+
+# Map of name → provider factory, used by FINDART_PROVIDERS whitelist.
+_PROVIDER_REGISTRY: dict[str, type] = {
+    "wiki": WikiProvider,
+    "met": MetProvider,
+    "aic": AicProvider,
+    "cma": CmaProvider,
+    "rijks": RijksProvider,
+}
+_ALL_PROVIDERS = list(_PROVIDER_REGISTRY.keys())
 
 
 class MuseumAdapter(Protocol):
@@ -158,13 +169,13 @@ def build_museum_search_service(
     if include_default:
         adapters.append(DefaultMuseumAdapter())
     if include_external:
-        adapters.extend(
-            [
-                CmaProvider(),
-                AicProvider(),
-                MetProvider(),
-                RijksProvider(),
-                WikiProvider(),
-            ]
-        )
+        raw = os.getenv("FINDART_PROVIDERS", "").strip()
+        enabled = [p.strip().lower() for p in raw.split(",") if p.strip()] if raw else _ALL_PROVIDERS
+        for name in enabled:
+            factory = _PROVIDER_REGISTRY.get(name)
+            if factory is None:
+                import warnings
+                warnings.warn(f"FINDART_PROVIDERS: unknown provider '{name}', skipping.")
+                continue
+            adapters.append(factory())
     return MuseumSearchService(adapters=adapters)

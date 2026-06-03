@@ -24,22 +24,29 @@ class WikiProvider:
     sparql_endpoint = "https://query.wikidata.org/sparql"
 
     def __init__(self, http: JsonHttpClient | None = None) -> None:
-        self.http = http or UrllibJsonHttpClient(user_agent=WIKI_USER_AGENT)
+        self.http = http or UrllibJsonHttpClient(
+            timeout_seconds=30.0,  # SPARQL + mwapi federation is slow
+            user_agent=WIKI_USER_AGENT,
+        )
 
     async def search(self, query: ArtworkQuery, limit: int) -> list[ArtworkCandidate]:
         commons_candidates: list[ArtworkCandidate] = []
         wikidata_candidates: list[ArtworkCandidate] = []
-        commons_error: Exception | None = None
+        commons_exc: Exception | None = None
+        wikidata_exc: Exception | None = None
+
         try:
             commons_candidates = await self.search_commons(query, limit=limit)
         except Exception as exc:
-            commons_error = exc
+            commons_exc = exc
 
         try:
             wikidata_candidates = await self.search_wikidata(query, limit=limit)
         except Exception as exc:
-            if commons_error is not None:
-                raise exc from commons_error
+            wikidata_exc = exc
+
+        if commons_exc is not None and wikidata_exc is not None:
+            raise wikidata_exc from commons_exc
 
         candidates = (
             [*wikidata_candidates, *commons_candidates]

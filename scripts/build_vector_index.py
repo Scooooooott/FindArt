@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+"""
+Build (or refresh) the vector search index in a persistent Qdrant instance.
+
+For in-memory development, this script is not needed — the API server
+auto-seeds from DEFAULT_CATALOG on startup. Run this script when you have
+a real Qdrant URL (Docker or Qdrant Cloud) and want to populate it.
+
+Usage (from project root):
+    python scripts/build_vector_index.py
+    python scripts/build_vector_index.py --clear    # wipe and rebuild
+
+Environment variables (read from .env):
+    QDRANT_URL        Qdrant server URL (required for persistent indexing)
+    QDRANT_API_KEY    Optional API key
+    EMBEDDING_MODEL   sentence-transformers model name
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+
+from dotenv import load_dotenv
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
+logger = logging.getLogger("build_index")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--clear", action="store_true", help="Delete existing collection and rebuild from scratch")
+    args = parser.parse_args()
+
+    try:
+        from qdrant_client import QdrantClient
+    except ImportError:
+        logger.error("qdrant-client not installed. Run: pip install qdrant-client")
+        sys.exit(1)
+
+    try:
+        from sentence_transformers import SentenceTransformer  # noqa: F401
+    except ImportError:
+        logger.error("sentence-transformers not installed. Run: pip install sentence-transformers")
+        sys.exit(1)
+
+    from app.data.default_catalog import DEFAULT_CATALOG
+    from app.services.vector_search import COLLECTION_NAME, QdrantVectorSearchService
+
+    qdrant_url = os.getenv("QDRANT_URL", "").strip()
+    qdrant_api_key = os.getenv("QDRANT_API_KEY", "").strip() or None
+    model_name = os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
+
+    if not qdrant_url:
+        logger.warning(
+            "QDRANT_URL is not set — running in-memory. "
+            "Data will be lost when this script exits. "
+            "Set QDRANT_URL in .env to index into a persistent Qdrant instance."
+        )
+        client = QdrantClient(":memory:")
+    else:
+        logger.info("Connecting to Qdrant at %s", qdrant_url)
+        client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+
+    if args.clear:
+        try:
+            client.delete_collection(COLLECTION_NAME)
+            logger.info("Deleted existing collection '%s'", COLLECTION_NAME)
+        except Exception:
+            pass  # collection did not exist yet
+
+    logger.info("Loading embedding model: %s", model_name)
+    service = QdrantVectorSearchService(client=client, model_name=model_name)
+
+    # ── Tier 1: DEFAULT_CATALOG ──────────────────────────────────────────────
+    logger.info("Indexing %d items from DEFAULT_CATALOG ...", len(DEFAULT_CATALOG))
+    n = service.seed_from_catalog(list(DEFAULT_CATALOG))
+    logger.info("Tier 1 done: %d items indexed", n)
+
+    # ── Tier 2: Wikidata SPARQL batch pull ───────────────────────────────────
+    # TODO: see docs/m3_todo.md — "Tier 2: Wikidata SPARQL batch pulling"
+
+    # ── Tier 3: Museum API seeding ───────────────────────────────────────────
+    # TODO: see docs/m3_todo.md — "Tier 3: Museum API seeding"
+
+    count = client.count(collection_name=COLLECTION_NAME).count
+    logger.info("Collection '%s' now has %d points total", COLLECTION_NAME, count)
+
+
+if __name__ == "__main__":
+    main()

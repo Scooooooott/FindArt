@@ -16,6 +16,8 @@ class ArtworkQuery(BaseModel):
     medium: str | None = None
     keywords: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Populated by LLM parser; consumed by the dialogue harness (not yet built)
+    ambiguity_dimensions: list[str] = Field(default_factory=list)
 
 
 class ArtworkCandidate(BaseModel):
@@ -75,6 +77,7 @@ class SearchDiagnostics(BaseModel):
     timings_ms: dict[str, float] = Field(default_factory=dict)
     providers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    fallback_mode: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -84,6 +87,40 @@ class SearchResponse(BaseModel):
     query: ArtworkQuery
     candidates: list[ArtworkCandidate]
     diagnostics: SearchDiagnostics
+    clarification: ClarificationHint | None = None
+
+
+class ClarificationHint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str
+    dimension: str
+
+
+class PaletteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image_url: str
+    n_colors: int = Field(default=8, ge=2, le=16)
+
+
+class PaletteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    colors: list[str]
+
+
+class LineartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image_url: str
+    mode: str = Field(default="fine", pattern="^(canny|fine)$")
+
+
+class LineartResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lineart_b64: str
 
 
 class ResolveImageRequest(BaseModel):
