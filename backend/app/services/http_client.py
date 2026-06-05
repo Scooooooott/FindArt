@@ -5,8 +5,10 @@ import json
 import os
 from collections.abc import Mapping
 from typing import Any, Protocol
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
+
+_ALLOWED_SCHEMES = {"http", "https"}
 
 
 class JsonHttpClient(Protocol):
@@ -46,6 +48,8 @@ class UrllibJsonHttpClient:
         params: Mapping[str, Any],
         headers: Mapping[str, str],
     ) -> dict[str, Any]:
+        if urlparse(url).scheme not in _ALLOWED_SCHEMES:
+            raise ValueError(f"Disallowed URL scheme: {urlparse(url).scheme!r}")
         request_url = _append_params(url, params)
         request = Request(
             request_url,
@@ -55,7 +59,7 @@ class UrllibJsonHttpClient:
                 **headers,
             },
         )
-        with urlopen(request, timeout=self.timeout_seconds) as response:
+        with urlopen(request, timeout=self.timeout_seconds) as response:  # nosemgrep: dynamic-urllib-use-detected
             payload = response.read().decode("utf-8")
         data = json.loads(payload)
         if not isinstance(data, dict):

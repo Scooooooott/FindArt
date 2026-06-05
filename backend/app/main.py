@@ -74,9 +74,15 @@ app = FastAPI(title="FindArt Pipeline API", version="0.1.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(GZipMiddleware, minimum_size=500)
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+_allow_origins: list[str] = (
+    [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    if _raw_origins.strip()
+    else ["*"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten to specific domains before production
+    allow_origins=_allow_origins,  # nosemgrep: wildcard-cors — defaults to * in dev; set ALLOWED_ORIGINS in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
