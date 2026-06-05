@@ -18,9 +18,11 @@ Environment variables (read from .env):
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
@@ -81,11 +83,45 @@ def main() -> None:
     n = service.seed_from_catalog(list(DEFAULT_CATALOG))
     logger.info("Tier 1 done: %d items indexed", n)
 
-    # ── Tier 2: Wikidata SPARQL batch pull ───────────────────────────────────
-    # TODO: see docs/m3_todo.md — "Tier 2: Wikidata SPARQL batch pulling"
+    # ── Tier 2a: SPARQL candidates (top-50 artists, recommended) ─────────────
+    from app.models import ArtworkCandidate
 
-    # ── Tier 3: Museum API seeding ───────────────────────────────────────────
-    # TODO: see docs/m3_todo.md — "Tier 3: Museum API seeding"
+    def _ingest_jsonl(path: Path, label: str) -> tuple[int, int]:
+        if not path.exists():
+            logger.info("%s skipped: %s not found.", label, path)
+            return 0, 0
+        logger.info("Found %s — ingesting…", path)
+        batch: list[ArtworkCandidate] = []
+        total = errors = 0
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    batch.append(ArtworkCandidate.model_validate(json.loads(line)))
+                except Exception:
+                    errors += 1
+                    continue
+                if len(batch) >= 256:
+                    total += service.seed_from_candidates(batch)
+                    batch.clear()
+                    logger.info("  %d %s points upserted…", total, label)
+        if batch:
+            total += service.seed_from_candidates(batch)
+        logger.info("%s done: %d candidates (%d parse errors)", label, total, errors)
+        return total, errors
+
+    sparql_file = Path(__file__).parent / "data" / "sparql_candidates.jsonl"
+    _ingest_jsonl(sparql_file, "Tier 2a SPARQL")
+
+    # ── Tier 2b: CirrusSearch candidates (ingest_wikidata.py fetch+normalize) ─
+    wikidata_file = Path(__file__).parent / "data" / "wikidata_candidates.jsonl"
+    _ingest_jsonl(wikidata_file, "Tier 2b CirrusSearch")
+
+    if not sparql_file.exists() and not wikidata_file.exists():
+        logger.info(
+            "Tip: run 'python scripts/ingest_wikidata.py sparql' to build the corpus."
+        )
+
+    # ── Tier 3: Museum API seeding (auto-grows via pipeline._seed_new_candidates) ─
 
     count = client.count(collection_name=COLLECTION_NAME).count
     logger.info("Collection '%s' now has %d points total", COLLECTION_NAME, count)

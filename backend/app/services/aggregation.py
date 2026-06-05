@@ -29,8 +29,26 @@ def aggregate_candidates(
 
             by_key[key] = merge_candidates(existing, candidate, rrf_score)
 
-    ordered = sorted(by_key.values(), key=lambda item: item.score, reverse=True)
+    ordered = sorted(
+        by_key.values(),
+        key=lambda item: item.score + _quality_score(item),
+        reverse=True,
+    )
     return ordered[:limit]
+
+
+def _quality_score(c: ArtworkCandidate) -> float:
+    """Small tie-breaking bonus for candidates with richer, more usable data.
+
+    Values are intentionally small so they only matter when RRF scores are close.
+    """
+    score = 0.0
+    if c.artist:                    score += 0.003  # card can show artist name
+    if c.year:                      score += 0.001  # card can show date
+    if c.thumbnail_url:             score += 0.003  # card has an image to display
+    if c.free_image_available:      score += 0.002  # high-res image accessible
+    if len(c.matched_sources) > 1:  score += 0.004  # found by multiple retrievers
+    return score
 
 
 def merge_candidates(
@@ -68,9 +86,19 @@ def merge_candidates(
 
 
 def dedupe_key(candidate: ArtworkCandidate) -> str:
-    title = _compact(candidate.title)
+    # Shared wikidata_id is the most reliable dedup signal:
+    # e.g. a Wikidata entry and its Commons scan of the same painting both carry Q45585.
+    if candidate.wikidata_id:
+        return f"wd:{candidate.wikidata_id}"
+
+    # Commons filename is stable and unique per file
+    if candidate.commons_filename:
+        return f"commons:{candidate.commons_filename.casefold()}"
+
+    # Fallback: normalised title + artist + decade
+    title  = _compact(candidate.title)
     artist = _compact(candidate.artist or "")
-    year = _year_bucket(candidate.year or "")
+    year   = _year_bucket(candidate.year or "")
     if title or artist:
         return f"{title}:{artist}:{year}"
     return f"{candidate.source_api}:{candidate.id}"
@@ -83,4 +111,3 @@ def _compact(value: str) -> str:
 def _year_bucket(value: str) -> str:
     match = re.search(r"\d{3,4}", value)
     return match.group(0) if match else ""
-

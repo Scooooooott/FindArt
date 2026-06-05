@@ -18,18 +18,23 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import logging
 import os
 import sys
 import time
+
+# Force UTF-8 output on Windows (avoids GBK encoding errors for CJK/symbols)
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 
 from dotenv import load_dotenv
-load_dotenv(ROOT / "backend" / ".env")
+load_dotenv(ROOT / ".env")
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s  %(message)s")
 
@@ -112,11 +117,11 @@ async def run_evaluation(cases: list[dict], verbose: bool) -> None:
         rr = reciprocal_rank(candidates, exp_title, exp_artist)
         fallback = response.diagnostics.fallback_mode or "-"
 
-        print(f"H@1={'✓' if h1 else '✗'}  H@3={'✓' if h3 else '✗'}  H@5={'✓' if h5 else '✗'}  {elapsed_ms}ms")
+        print(f"H@1={'Y' if h1 else 'N'}  H@3={'Y' if h3 else 'N'}  H@5={'Y' if h5 else 'N'}  {elapsed_ms}ms")
 
         if verbose and candidates:
             for rank, c in enumerate(candidates[:3], 1):
-                marker = "✓" if is_match(c, exp_title, exp_artist) else " "
+                marker = "+" if is_match(c, exp_title, exp_artist) else " "
                 print(f"    {marker} #{rank} {c.title!r}  {c.artist or '?'}  [{c.source_api}]")
 
         rows.append({
@@ -136,9 +141,9 @@ def _print_summary(rows: list[dict]) -> None:
     print("─" * len(header))
 
     for r in rows:
-        h1 = "✓" if r["h1"] else "✗"
-        h3 = "✓" if r["h3"] else "✗"
-        h5 = "✓" if r["h5"] else "✗"
+        h1 = "Y" if r["h1"] else "N"
+        h3 = "Y" if r["h3"] else "N"
+        h5 = "Y" if r["h5"] else "N"
         err = " !" if r.get("error") else ""
         print(
             f"{r['input'][:W]:<{W}} {r['category']:<8} "

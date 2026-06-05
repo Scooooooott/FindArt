@@ -1,17 +1,29 @@
 import { useLocalSearchParams, router } from 'expo-router'
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform } from 'react-native'
-import { Image } from 'expo-image'
-import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
+import { StatusBar } from 'expo-status-bar'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useQueryClient } from '@tanstack/react-query'
 import { useArtwork } from '../../hooks/useArtwork'
+import { ZoomableImage } from '../../components/ZoomableImage'
 import { colors } from '../../constants/colors'
 import type { ArtworkCandidate } from '../../types/api'
 
+const _EMPTY_CANDIDATE: ArtworkCandidate = {
+  id: '', source_api: '', title: '', artist: null, year: null, medium: null,
+  thumbnail_url: null, image_url: null, iiif_base_url: null, source_url: null,
+  detail_url: null, wikidata_id: null, is_public_domain: null, license_status: null,
+  image_available: null, score: 0, matched_sources: [], metadata: {},
+}
+
 export default function ArtworkScreen() {
-  const params = useLocalSearchParams<{ id: string; data: string }>()
-  const candidate: ArtworkCandidate = JSON.parse(params.data ?? '{}')
+  const params = useLocalSearchParams<{ id: string }>()
+  const insets = useSafeAreaInsets()
+  const queryClient = useQueryClient()
+  const candidate: ArtworkCandidate =
+    queryClient.getQueryData<ArtworkCandidate>(['candidate', params.id])
+    ?? _EMPTY_CANDIDATE
   const { data: artwork, isLoading, isError } = useArtwork(candidate)
 
-  // Prefer resolved medium_url, fall back to candidate's own URLs
   const displayUrl = artwork?.medium_url ?? candidate.image_url ?? candidate.thumbnail_url
 
   const meta = [candidate.year, candidate.medium]
@@ -20,10 +32,12 @@ export default function ArtworkScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
+
       {/* ── Header ── */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Platform.OS === 'web' ? 52 : insets.top + 12 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
-          <Text style={styles.backText}>← 返回</Text>
+          <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>
           {candidate.title}
@@ -35,58 +49,24 @@ export default function ArtworkScreen() {
       <View style={styles.imageContainer}>
         {isLoading && !displayUrl && (
           <View style={styles.loadingBox}>
-            <Text style={styles.loadingText}>加载图片中...</Text>
+            <Text style={styles.loadingText}>Loading image...</Text>
           </View>
         )}
 
         {isError && !displayUrl && (
           <View style={styles.loadingBox}>
-            <Text style={styles.errorText}>图片加载失败</Text>
+            <Text style={styles.errorText}>Failed to load image</Text>
           </View>
         )}
 
-        {displayUrl && Platform.OS === 'web' && (
-          <TransformWrapper
-            initialScale={1}
-            minScale={0.3}
-            maxScale={10}
-            centerOnInit
-            doubleClick={{ mode: 'reset' }}
-          >
-            {({ resetTransform }) => (
-              <>
-                <TransformComponent
-                  wrapperStyle={{ width: '100%', height: '100%' } as any}
-                  contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' } as any}
-                >
-                  <img
-                    src={displayUrl}
-                    alt={candidate.title}
-                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', userSelect: 'none' }}
-                    draggable={false}
-                  />
-                </TransformComponent>
-                <TouchableOpacity style={styles.resetBtn} onPress={() => resetTransform()} activeOpacity={0.8}>
-                  <Text style={styles.resetText}>复位</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </TransformWrapper>
-        )}
-
-        {displayUrl && Platform.OS !== 'web' && (
-          // TODO: Replace with gesture-based zoom for mobile (see docs/frontend_todo.md)
-          <Image
-            source={{ uri: displayUrl }}
-            style={styles.nativeImage}
-            contentFit="contain"
-          />
+        {displayUrl && (
+          <ZoomableImage source={displayUrl} alt={candidate.title} />
         )}
       </View>
 
       {/* ── Metadata Card ── */}
       <View style={styles.metaCard}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.metaScroll}>
           <View style={styles.metaInner}>
             <Text style={styles.title}>{candidate.title}</Text>
             {candidate.artist && (
@@ -101,9 +81,9 @@ export default function ArtworkScreen() {
         <TouchableOpacity
           style={styles.practiceBtn}
           activeOpacity={0.85}
-          onPress={() => router.push({ pathname: '/practice/[id]', params: { id: candidate.id, data: params.data } })}
+          onPress={() => router.push({ pathname: '/practice/[id]', params: { id: candidate.id } })}
         >
-          <Text style={styles.practiceBtnText}>开始临摹 →</Text>
+          <Text style={styles.practiceBtnText}>Practice →</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -118,7 +98,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 52,
     paddingBottom: 10,
     paddingHorizontal: 16,
     backgroundColor: '#111',
@@ -159,22 +138,6 @@ const styles = StyleSheet.create({
     color: '#dc2626',
     fontSize: 14,
   },
-  nativeImage: {
-    flex: 1,
-  },
-  resetBtn: {
-    position: 'absolute',
-    bottom: 12,
-    right: 12,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  resetText: {
-    color: '#fff',
-    fontSize: 12,
-  },
   metaCard: {
     backgroundColor: colors.surface,
     paddingVertical: 14,
@@ -184,6 +147,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  metaScroll: {
+    flex: 1,
   },
   metaInner: {
     gap: 2,
@@ -206,7 +172,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
   practiceBtn: {
-    marginLeft: 'auto',
     backgroundColor: colors.accent,
     borderRadius: 8,
     paddingHorizontal: 16,

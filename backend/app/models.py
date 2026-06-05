@@ -135,3 +135,44 @@ class ResolveImageRequest(BaseModel):
         if self.candidate is None and not (self.source_api and self.id):
             raise ValueError("Provide either candidate or both source_api and id.")
         return self
+
+
+# ---------------------------------------------------------------------------
+# Session — history & favourites
+# ---------------------------------------------------------------------------
+
+class HistoryEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")  # tolerate future schema additions
+
+    query_text: str
+    parsed_query: dict[str, Any] | None = None
+    result_count: int | None = None
+    fallback_mode: str | None = None
+    created_at: str
+
+
+class HistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    history: list[HistoryEntry]
+
+
+class FavouriteEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    artwork_id: str
+    source_api: str
+    candidate: ArtworkCandidate
+    created_at: str
+
+
+class FavouritesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    favourites: list[FavouriteEntry]
+
+
+class AddFavouriteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate: ArtworkCandidate

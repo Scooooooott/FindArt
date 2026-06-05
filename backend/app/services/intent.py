@@ -116,6 +116,8 @@ ambiguity_dimensions — List the aspects still unclear (empty if fully identifi
   medium, and good keywords; set confidence 0.40–0.60.
 - Never invent specific details you are unsure about — use null and lower confidence.
 - keywords must be useful for English-language museum API text search.
+
+Respond with a JSON object containing exactly the fields above. No extra keys, no markdown fences.
 """
 
 
@@ -160,7 +162,8 @@ class LLMIntentParser:
         self._fallback = DefaultIntentParser()
 
     async def parse(self, text: str) -> ArtworkQuery:
-        cached = self._cache.get(text)
+        cache_key = " ".join(text.split()).casefold()
+        cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
 
@@ -170,7 +173,7 @@ class LLMIntentParser:
             logger.warning("Gemini intent parse failed (%s), using fallback", exc)
             result = await self._fallback.parse(text)
 
-        self._cache.set(text, result)
+        self._cache.set(cache_key, result)
         return result
 
     async def _call_gemini(self, text: str) -> ArtworkQuery:
@@ -282,15 +285,92 @@ def _extract_keywords(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# DeepSeek (OpenAI-compatible) parser
+# ---------------------------------------------------------------------------
+
+class DeepSeekIntentParser:
+    """DeepSeek-backed intent parser using the OpenAI-compatible API.
+
+    Works with any OpenAI-compatible endpoint; defaults to DeepSeek.
+    Falls back to DefaultIntentParser on any error.
+    """
+
+    def __init__(self, api_key: str, model: str, base_url: str) -> None:
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise RuntimeError(
+                "openai package is not installed. Run: pip install openai"
+            ) from exc
+
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self._model = model
+        self._cache: TTLCache[ArtworkQuery] = TTLCache(ttl_seconds=3600)
+        self._fallback = DefaultIntentParser()
+
+    async def parse(self, text: str) -> ArtworkQuery:
+        cache_key = " ".join(text.split()).casefold()
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            result = await self._call_api(text)
+        except Exception as exc:
+            logger.warning("DeepSeek intent parse failed (%s), using fallback", exc)
+            result = await self._fallback.parse(text)
+
+        self._cache.set(cache_key, result)
+        return result
+
+    async def _call_api(self, text: str) -> ArtworkQuery:
+        response = await self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user",   "content": text},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+        raw = response.choices[0].message.content
+        if not raw:
+            raise ValueError("Empty response from DeepSeek")
+
+        parsed = _ParsedIntent.model_validate_json(raw)
+        confidence = max(0.0, min(1.0, parsed.confidence))
+
+        return ArtworkQuery(
+            raw_text=text,
+            title=parsed.title,
+            artist=parsed.artist,
+            period=parsed.period,
+            style=parsed.style,
+            medium=parsed.medium,
+            keywords=parsed.keywords,
+            confidence=confidence,
+            ambiguity_dimensions=parsed.ambiguity_dimensions,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
-def create_intent_parser() -> LLMIntentParser | DefaultIntentParser:
-    """Return LLMIntentParser if GEMINI_API_KEY is configured, else the rule-based fallback."""
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
-    if api_key:
-        logger.info("Using Gemini intent parser (model=%s)", model)
-        return LLMIntentParser(api_key=api_key, model=model)
-    logger.info("GEMINI_API_KEY not set — using rule-based intent parser")
+def create_intent_parser() -> DeepSeekIntentParser | LLMIntentParser | DefaultIntentParser:
+    """Parser priority: DeepSeek → Gemini → rule-based fallback."""
+    ds_key  = os.getenv("DEEPSEEK_API_KEY",  "").strip()
+    ds_model = os.getenv("DEEPSEEK_MODEL",   "deepseek-chat").strip()
+    ds_url  = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
+    if ds_key:
+        logger.info("Using DeepSeek intent parser (model=%s)", ds_model)
+        return DeepSeekIntentParser(api_key=ds_key, model=ds_model, base_url=ds_url)
+
+    gemini_key   = os.getenv("GEMINI_API_KEY", "").strip()
+    gemini_model = os.getenv("GEMINI_MODEL",   "gemini-2.5-flash").strip()
+    if gemini_key:
+        logger.info("Using Gemini intent parser (model=%s)", gemini_model)
+        return LLMIntentParser(api_key=gemini_key, model=gemini_model)
+
+    logger.info("No LLM API key set — using rule-based intent parser")
     return DefaultIntentParser()

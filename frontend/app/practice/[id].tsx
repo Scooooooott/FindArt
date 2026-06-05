@@ -4,40 +4,19 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Alert,
   Platform, ActivityIndicator, ScrollView,
 } from 'react-native'
-import { Image } from 'expo-image'
-import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
+import { StatusBar } from 'expo-status-bar'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useQueryClient } from '@tanstack/react-query'
 import { useArtwork } from '../../hooks/useArtwork'
 import { useLineart } from '../../hooks/useLineart'
+import { ZoomableImage } from '../../components/ZoomableImage'
 import type { ArtworkCandidate } from '../../types/api'
 
-// ---------------------------------------------------------------------------
-// Grid overlay — SVG on web, Views on native
-// ---------------------------------------------------------------------------
-function GridOverlay({ divisions }: { divisions: number }) {
-  if (Platform.OS === 'web') {
-    const lines: React.ReactElement[] = []
-    for (let i = 1; i < divisions; i++) {
-      const pct = `${(i / divisions) * 100}%`
-      lines.push(
-        <line key={`h${i}`} x1="0" y1={pct} x2="100%" y2={pct} stroke="rgba(255,255,255,0.3)" strokeWidth="1" />,
-        <line key={`v${i}`} x1={pct} y1="0" x2={pct} y2="100%" stroke="rgba(255,255,255,0.3)" strokeWidth="1" />,
-      )
-    }
-    return (
-      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' } as any}>
-        {lines}
-      </svg>
-    )
-  }
-  const lines: React.ReactElement[] = []
-  for (let i = 1; i < divisions; i++) {
-    const pct = `${(i / divisions) * 100}%` as any
-    lines.push(
-      <View key={`h${i}`} style={{ position: 'absolute', top: pct, left: 0, right: 0, height: 1, backgroundColor: 'rgba(255,255,255,0.3)' }} />,
-      <View key={`v${i}`} style={{ position: 'absolute', left: pct, top: 0, bottom: 0, width: 1, backgroundColor: 'rgba(255,255,255,0.3)' }} />,
-    )
-  }
-  return <View style={StyleSheet.absoluteFill} pointerEvents="none">{lines}</View>
+const _EMPTY_CANDIDATE: ArtworkCandidate = {
+  id: '', source_api: '', title: '', artist: null, year: null, medium: null,
+  thumbnail_url: null, image_url: null, iiif_base_url: null, source_url: null,
+  detail_url: null, wikidata_id: null, is_public_domain: null, license_status: null,
+  image_available: null, score: 0, matched_sources: [], metadata: {},
 }
 
 // ---------------------------------------------------------------------------
@@ -79,8 +58,12 @@ type GridDivisions = 0 | 3 | 4 | 6
 type LineartMode = 'off' | 'canny' | 'fine'
 
 export default function PracticeScreen() {
-  const params = useLocalSearchParams<{ id: string; data: string }>()
-  const candidate: ArtworkCandidate = JSON.parse(params.data ?? '{}')
+  const params = useLocalSearchParams<{ id: string }>()
+  const insets = useSafeAreaInsets()
+  const queryClient = useQueryClient()
+  const candidate: ArtworkCandidate =
+    queryClient.getQueryData<ArtworkCandidate>(['candidate', params.id])
+    ?? _EMPTY_CANDIDATE
   const { data: artwork } = useArtwork(candidate)
 
   const iiifMediumUrl = candidate.iiif_base_url
@@ -126,7 +109,7 @@ export default function PracticeScreen() {
 
   // ── Refs ──────────────────────────────────────────────────────────────────
   const canvasRef = useRef<View>(null)
-  const imgRef = useRef<HTMLImageElement | null>(null)
+  const imgRef = useRef<any>(null)
 
   // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -136,7 +119,6 @@ export default function PracticeScreen() {
     return () => document.removeEventListener('fullscreenchange', sync)
   }, [])
 
-  // Auto-show/hide header and toolbar on mouse edge proximity in fullscreen
   useEffect(() => {
     if (Platform.OS !== 'web') return
     if (!isFullscreen) {
@@ -199,7 +181,7 @@ export default function PracticeScreen() {
     if (Platform.OS === 'web') {
       try { await navigator.clipboard.writeText(hex) } catch { window.alert(hex) }
     } else {
-      Alert.alert('色号', hex)
+      Alert.alert('Color', hex)
     }
   }
 
@@ -221,7 +203,7 @@ export default function PracticeScreen() {
       const canvas = await initPickerCanvas(sourceUrl)
       pickerCanvasRef.current = { url: sourceUrl, canvas }
     } catch {
-      setPickerError('该图片不支持取色（跨域限制）')
+      setPickerError('Color picking unavailable (CORS restriction)')
     } finally {
       setPickerLoading(false)
     }
@@ -310,22 +292,27 @@ export default function PracticeScreen() {
 
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
 
       {/* ── Header ── */}
-      <View style={[styles.header, headerFsStyle]}>
+      <View style={[
+        styles.header,
+        { paddingTop: Platform.OS === 'web' ? 52 : insets.top + 12 },
+        headerFsStyle,
+      ]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
-          <Text style={styles.backText}>← 退出临摹</Text>
+          <Text style={styles.backText}>← Exit</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{candidate.title}</Text>
         <View style={styles.headerRight}>
           {lineartMode !== 'off' && (
             <View style={styles.modeTag}>
-              <Text style={styles.modeTagText}>{lineartMode === 'canny' ? '快速线稿' : '精细线稿'}</Text>
+              <Text style={styles.modeTagText}>{lineartMode === 'canny' ? 'Fast Lineart' : 'Fine Lineart'}</Text>
             </View>
           )}
           {Platform.OS === 'web' ? (
             <TouchableOpacity onPress={toggleFullscreen} style={styles.fsBtn} activeOpacity={0.7}>
-              <Text style={styles.fsBtnText}>{isFullscreen ? '还原' : '全屏'}</Text>
+              <Text style={styles.fsBtnText}>{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</Text>
             </TouchableOpacity>
           ) : (
             <View style={styles.headerSpacer} />
@@ -348,52 +335,24 @@ export default function PracticeScreen() {
         {(lineartLoading || (!displayUrl && !lineartLoading)) && (
           <View style={styles.placeholder}>
             {lineartLoading
-              ? <><ActivityIndicator size="large" color="#aaa" /><Text style={styles.loadingText}>{lineartMode === 'canny' ? '快速生成中（约 3–5 秒）...' : '精细生成中（约 15–30 秒）...'}</Text></>
-              : <Text style={styles.placeholderText}>图片不可用</Text>
+              ? <><ActivityIndicator size="large" color="#aaa" /><Text style={styles.loadingText}>{lineartMode === 'canny' ? 'Generating (3–5s)...' : 'Generating (15–30s)...'}</Text></>
+              : <Text style={styles.placeholderText}>Image unavailable</Text>
             }
           </View>
         )}
 
-        {/* Web — zoom/pan */}
-        {!lineartLoading && displayUrl && Platform.OS === 'web' && (
-          <TransformWrapper initialScale={1} minScale={0.2} maxScale={15} centerOnInit doubleClick={{ mode: 'reset' }}>
-            {({ resetTransform }) => (
-              <>
-                <TransformComponent
-                  wrapperStyle={{ width: '100%', height: '100%' } as any}
-                  contentStyle={{ position: 'relative', lineHeight: 0 } as any}
-                >
-                  <img
-                    ref={imgRef as any}
-                    src={displayUrl}
-                    alt={candidate.title}
-                    style={{
-                      display: 'block',
-                      maxWidth: 'calc(100vw - 2rem)',
-                      maxHeight: isWebFS ? 'calc(100vh - 2rem)' : 'calc(100vh - 200px)',
-                      userSelect: 'none',
-                    }}
-                    draggable={false}
-                  />
-                  {gridDivisions > 0 && <GridOverlay divisions={gridDivisions} />}
-                </TransformComponent>
-                <TouchableOpacity style={styles.resetBtn} onPress={() => resetTransform()} activeOpacity={0.8}>
-                  <Text style={styles.resetText}>复位</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </TransformWrapper>
+        {/* ZoomableImage — handles Web (react-zoom-pan-pinch) and Android (gesture-handler) */}
+        {!lineartLoading && displayUrl && (
+          <ZoomableImage
+            source={displayUrl}
+            alt={candidate.title}
+            gridDivisions={gridDivisions}
+            imgRef={imgRef}
+            isFullscreen={isWebFS}
+          />
         )}
 
-        {/* Native — static image */}
-        {!lineartLoading && displayUrl && Platform.OS !== 'web' && (
-          <View style={{ flex: 1 }}>
-            <Image source={{ uri: displayUrl }} style={styles.nativeImage} contentFit="contain" />
-            {gridDivisions > 0 && <GridOverlay divisions={gridDivisions} />}
-          </View>
-        )}
-
-        {/* Magnifier lens */}
+        {/* Magnifier lens — web only */}
         {magnifierActive && magnifierPos && displayUrl && Platform.OS === 'web' && (
           <>
             <div style={{
@@ -429,7 +388,7 @@ export default function PracticeScreen() {
           </>
         )}
 
-        {/* Magnifier zoom slider — appears when magnifier is active */}
+        {/* Magnifier zoom slider — web only */}
         {magnifierActive && Platform.OS === 'web' && (
           <div style={{
             position: 'absolute',
@@ -444,7 +403,7 @@ export default function PracticeScreen() {
             zIndex: 30,
             userSelect: 'none',
           } as any}>
-            <span style={{ color: '#aaa', fontSize: 11, whiteSpace: 'nowrap' }}>倍率</span>
+            <span style={{ color: '#aaa', fontSize: 11, whiteSpace: 'nowrap' }}>Zoom</span>
             <input
               type="range"
               min={2}
@@ -458,7 +417,7 @@ export default function PracticeScreen() {
           </div>
         )}
 
-        {/* Eyedropper color tooltip */}
+        {/* Eyedropper color tooltip — web only */}
         {pickerActive && pickerPos && pickerColor && Platform.OS === 'web' && (
           <div style={{
             position: 'absolute',
@@ -487,7 +446,7 @@ export default function PracticeScreen() {
           {pickerLoading ? (
             <View style={styles.stripRow}>
               <ActivityIndicator color="#aaa" size="small" />
-              <Text style={styles.stripHint}>加载图片中...</Text>
+              <Text style={styles.stripHint}>Loading image...</Text>
             </View>
           ) : pickerError ? (
             <Text style={styles.stripError}>{pickerError}</Text>
@@ -501,7 +460,7 @@ export default function PracticeScreen() {
               ))}
             </ScrollView>
           ) : (
-            <Text style={styles.stripHint}>在图片上单击以拾取颜色</Text>
+            <Text style={styles.stripHint}>Click on the image to pick a color</Text>
           )}
         </View>
       )}
@@ -509,7 +468,7 @@ export default function PracticeScreen() {
       {/* ── Toolbar ── */}
       <View style={[styles.toolbar, toolbarFsStyle]}>
 
-        {/* 线稿 */}
+        {/* Lineart */}
         <TouchableOpacity
           style={[styles.toolBtn, lineartMode !== 'off' && styles.toolBtnActive]}
           onPress={cycleLineart}
@@ -518,29 +477,29 @@ export default function PracticeScreen() {
         >
           {lineartLoading
             ? <ActivityIndicator size="small" color="#aaa" />
-            : <Text style={[styles.toolLabel, lineartMode !== 'off' && styles.toolLabelActive]}>线稿</Text>
+            : <Text style={[styles.toolLabel, lineartMode !== 'off' && styles.toolLabelActive]}>Lineart</Text>
           }
           <Text style={styles.toolSub}>
             {lineartMode === 'off'
-              ? '点击生成'
+              ? 'Tap to generate'
               : lineartLoading
-              ? (lineartMode === 'canny' ? '快速生成中...' : '精细生成中...')
-              : lineartMode === 'canny' ? '快速 · 再按精细' : '精细 · 再按关闭'
+              ? 'Generating...'
+              : lineartMode === 'canny' ? 'Fast · tap for Fine' : 'Fine · tap to disable'
             }
           </Text>
         </TouchableOpacity>
 
-        {/* 网格 */}
+        {/* Grid */}
         <TouchableOpacity
           style={[styles.toolBtn, gridDivisions > 0 && styles.toolBtnActive]}
           onPress={cycleGrid}
           activeOpacity={0.7}
         >
-          <Text style={[styles.toolLabel, gridDivisions > 0 && styles.toolLabelActive]}>网格</Text>
-          <Text style={styles.toolSub}>{gridDivisions === 0 ? '关闭' : `${gridDivisions}×${gridDivisions}`}</Text>
+          <Text style={[styles.toolLabel, gridDivisions > 0 && styles.toolLabelActive]}>Grid</Text>
+          <Text style={styles.toolSub}>{gridDivisions === 0 ? 'Off' : `${gridDivisions}×${gridDivisions}`}</Text>
         </TouchableOpacity>
 
-        {/* 取色器 */}
+        {/* Eyedropper */}
         <TouchableOpacity
           style={[styles.toolBtn, pickerActive && styles.toolBtnActive]}
           onPress={Platform.OS === 'web' ? togglePicker : undefined}
@@ -549,24 +508,24 @@ export default function PracticeScreen() {
         >
           {pickerLoading
             ? <ActivityIndicator size="small" color="#aaa" />
-            : <Text style={[styles.toolLabel, pickerActive && styles.toolLabelActive]}>取色器</Text>
+            : <Text style={[styles.toolLabel, pickerActive && styles.toolLabelActive]}>Eyedropper</Text>
           }
           <Text style={styles.toolSub}>
-            {Platform.OS !== 'web' ? '仅 Web' : pickerActive ? '点击关闭' : '点击启用'}
+            {Platform.OS !== 'web' ? 'Web only' : pickerActive ? 'Tap to disable' : 'Tap to enable'}
           </Text>
         </TouchableOpacity>
 
-        {/* 放大镜 */}
+        {/* Magnifier */}
         <TouchableOpacity
           style={[styles.toolBtn, magnifierActive && styles.toolBtnActive]}
           onPress={Platform.OS === 'web' ? toggleMagnifier : undefined}
           activeOpacity={0.7}
         >
-          <Text style={[styles.toolLabel, magnifierActive && styles.toolLabelActive]}>放大镜</Text>
+          <Text style={[styles.toolLabel, magnifierActive && styles.toolLabelActive]}>Magnifier</Text>
           <Text style={styles.toolSub}>
             {Platform.OS !== 'web'
-              ? '仅 Web'
-              : magnifierActive ? `${zoomLevel}× · 滑块调节` : '悬停查看'
+              ? 'Web only'
+              : magnifierActive ? `${zoomLevel}× · adjust` : 'Hover to zoom'
             }
           </Text>
         </TouchableOpacity>
@@ -584,7 +543,7 @@ const styles = StyleSheet.create({
 
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingTop: 52, paddingBottom: 10, paddingHorizontal: 16,
+    paddingBottom: 10, paddingHorizontal: 16,
     backgroundColor: '#111', gap: 12,
   },
   backBtn: { paddingVertical: 4 },
@@ -601,13 +560,6 @@ const styles = StyleSheet.create({
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   placeholderText: { color: '#555', fontSize: 14 },
   loadingText: { color: '#888', fontSize: 13 },
-  nativeImage: { flex: 1 },
-  resetBtn: {
-    position: 'absolute', bottom: 12, right: 12,
-    backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 6,
-    paddingHorizontal: 10, paddingVertical: 5,
-  },
-  resetText: { color: '#fff', fontSize: 12 },
 
   pickerStrip: {
     backgroundColor: '#141414',

@@ -12,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "artworks"
 
+# intfloat/multilingual-e5-large (and the broader E5 family) requires
+# "passage: " prefix for documents and "query: " prefix for queries.
+# Leave both empty for MiniLM or other models without instruction prefixes.
+_DOC_PREFIX   = os.getenv("EMBED_DOC_PREFIX",   "").strip()
+_QUERY_PREFIX = os.getenv("EMBED_QUERY_PREFIX",  "").strip()
+
 
 # ---------------------------------------------------------------------------
 # Protocol — lets pipeline accept any vector search implementation
@@ -25,6 +31,27 @@ class VectorSearchService(Protocol):
 # ---------------------------------------------------------------------------
 # Text helpers
 # ---------------------------------------------------------------------------
+
+def _candidate_to_embed_text(candidate: ArtworkCandidate) -> str:
+    """Convert an ArtworkCandidate to a single string for embedding."""
+    parts: list[str] = []
+    if candidate.title:
+        parts.append(candidate.title)
+    if candidate.artist:
+        parts.append(f"by {candidate.artist}")
+    if candidate.year:
+        parts.append(str(candidate.year))
+    if candidate.medium:
+        parts.append(candidate.medium)
+    # Enrich with style metadata populated by Wikidata / catalog ingest
+    movement = candidate.metadata.get("movement")
+    genre    = candidate.metadata.get("genre")
+    if movement:
+        parts.append(movement)
+    if genre:
+        parts.append(genre)
+    return ". ".join(filter(None, parts))
+
 
 def _artwork_to_embed_text(item: dict[str, Any]) -> str:
     """Convert a catalog dict to a single string for embedding."""
@@ -63,6 +90,17 @@ def _query_to_embed_text(query: ArtworkQuery) -> str:
     return " ".join(filter(None, parts)) or query.raw_text
 
 
+def _stable_point_id(candidate: ArtworkCandidate) -> str:
+    """Deterministic Qdrant point ID stable across ingest sources.
+
+    Prioritises wikidata_id so the same painting ingested from Wikidata,
+    Met, Rijksmuseum, etc. always maps to the same point — Qdrant upsert
+    then overwrites rather than creating a duplicate vector.
+    """
+    key = candidate.wikidata_id or candidate.commons_filename or candidate.id
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
+
+
 # ---------------------------------------------------------------------------
 # Qdrant-backed implementation
 # ---------------------------------------------------------------------------
@@ -86,12 +124,22 @@ class QdrantVectorSearchService:
     def _ensure_collection(self) -> None:
         from qdrant_client.models import Distance, VectorParams
         try:
-            self._client.get_collection(COLLECTION_NAME)
-        except Exception:
-            self._client.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=self._dim, distance=Distance.COSINE),
+            info = self._client.get_collection(COLLECTION_NAME)
+            existing_dim = info.config.params.vectors.size
+            if existing_dim == self._dim:
+                return
+            logger.warning(
+                "Collection '%s' has dim=%d but model outputs dim=%d — "
+                "dropping and recreating. Re-run the ingest scripts.",
+                COLLECTION_NAME, existing_dim, self._dim,
             )
+            self._client.delete_collection(COLLECTION_NAME)
+        except Exception:
+            pass  # collection does not exist yet
+        self._client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=self._dim, distance=Distance.COSINE),
+        )
 
     def seed_from_catalog(self, catalog: list[dict[str, Any]]) -> int:
         """Embed and upsert catalog items into Qdrant. Returns number of items indexed."""
@@ -100,15 +148,35 @@ class QdrantVectorSearchService:
         if not catalog:
             return 0
 
-        texts = [_artwork_to_embed_text(item) for item in catalog]
+        texts = [_DOC_PREFIX + _artwork_to_embed_text(item) for item in catalog]
         vectors = self._model.encode(texts, show_progress_bar=False).tolist()
 
         points = []
         for item, vector in zip(catalog, vectors):
             candidate = candidate_from_catalog(item, score=0.0, retrieval_path=self.name)
-            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, item["id"]))
             points.append(PointStruct(
-                id=point_id,
+                id=_stable_point_id(candidate),
+                vector=vector,
+                payload=candidate.model_dump(),
+            ))
+
+        self._client.upsert(collection_name=COLLECTION_NAME, points=points)
+        return len(points)
+
+    def seed_from_candidates(self, candidates: list[ArtworkCandidate]) -> int:
+        """Embed and upsert ArtworkCandidate objects directly. Returns number upserted."""
+        from qdrant_client.models import PointStruct
+
+        if not candidates:
+            return 0
+
+        texts = [_DOC_PREFIX + _candidate_to_embed_text(c) for c in candidates]
+        vectors = self._model.encode(texts, show_progress_bar=False).tolist()
+
+        points = []
+        for candidate, vector in zip(candidates, vectors):
+            points.append(PointStruct(
+                id=_stable_point_id(candidate),
                 vector=vector,
                 payload=candidate.model_dump(),
             ))
@@ -121,7 +189,7 @@ class QdrantVectorSearchService:
         return await asyncio.to_thread(self._sync_search, query, limit, score_threshold)
 
     def _sync_search(self, query: ArtworkQuery, limit: int, score_threshold: float) -> list[ArtworkCandidate]:
-        query_text = _query_to_embed_text(query)
+        query_text = _QUERY_PREFIX + _query_to_embed_text(query)
         query_vector = self._model.encode(query_text).tolist()
 
         results = self._client.query_points(

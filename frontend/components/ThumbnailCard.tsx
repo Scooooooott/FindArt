@@ -1,13 +1,16 @@
-import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
+import { Image } from 'expo-image'
 import { colors } from '../constants/colors'
 import type { ArtworkCandidate } from '../types/api'
 
 interface Props {
   candidate: ArtworkCandidate
   onPress: () => void
+  isFavourited?: boolean
+  onToggleFavourite?: () => void
 }
 
-export function ThumbnailCard({ candidate, onPress }: Props) {
+export function ThumbnailCard({ candidate, onPress, isFavourited, onToggleFavourite }: Props) {
   const hasImage = !!candidate.thumbnail_url
 
   return (
@@ -17,17 +20,35 @@ export function ThumbnailCard({ candidate, onPress }: Props) {
           <Image
             source={{ uri: candidate.thumbnail_url! }}
             style={styles.image}
-            resizeMode="cover"
+            contentFit="cover"
+            transition={150}
           />
         ) : (
           <View style={[styles.image, styles.placeholder]}>
             <Text style={styles.placeholderIcon}>🖼</Text>
           </View>
         )}
+
+        {/* Source badge — bottom-left */}
         <View style={styles.sourceBadge}>
           <Text style={styles.sourceBadgeText}>{candidate.source_api}</Text>
         </View>
+
+        {/* Favourite button — top-right */}
+        {onToggleFavourite && (
+          <TouchableOpacity
+            style={styles.heartBtn}
+            onPress={onToggleFavourite}
+            hitSlop={{ top: 6, right: 6, bottom: 6, left: 6 }}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.heartIcon, isFavourited && styles.heartActive]}>
+              {isFavourited ? '♥' : '♡'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
+
       <View style={styles.meta}>
         <Text style={styles.title} numberOfLines={2}>{candidate.title}</Text>
         {candidate.artist && (
@@ -82,6 +103,25 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '600',
     letterSpacing: 0.3,
+  },
+  heartBtn: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 14,
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heartIcon: {
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.85)',
+    lineHeight: 17,
+  },
+  heartActive: {
+    color: '#e85d75',
   },
   meta: {
     padding: 8,

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { View, TextInput, TouchableOpacity, Text, StyleSheet, ActivityIndicator } from 'react-native'
+import { View, TextInput, TouchableOpacity, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native'
 import { colors } from '../constants/colors'
 
 interface Props {
@@ -21,7 +21,7 @@ export function SearchBar({ onSearch, loading }: Props) {
         style={styles.input}
         value={text}
         onChangeText={setText}
-        placeholder="描述一幅画，例如：那幅钟表融化的画"
+        placeholder="Describe a painting, e.g. melting clocks by Dalí"
         placeholderTextColor={colors.textMuted}
         onSubmitEditing={submit}
         returnKeyType="search"
@@ -30,7 +30,7 @@ export function SearchBar({ onSearch, loading }: Props) {
       <TouchableOpacity style={styles.button} onPress={submit} disabled={loading} activeOpacity={0.8}>
         {loading
           ? <ActivityIndicator size="small" color={colors.surface} />
-          : <Text style={styles.buttonText}>搜索</Text>
+          : <Text style={styles.buttonText}>Search</Text>
         }
       </TouchableOpacity>
     </View>
@@ -52,7 +52,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.textPrimary,
     backgroundColor: colors.surface,
-    outlineStyle: 'none',
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   } as any,
   button: {
     height: 44,

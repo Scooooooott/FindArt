@@ -1,33 +1,118 @@
 import { useState } from 'react'
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput } from 'react-native'
+import {
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput,
+  ActivityIndicator, Platform, KeyboardAvoidingView,
+} from 'react-native'
 import { router } from 'expo-router'
+import { useQueryClient } from '@tanstack/react-query'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { SearchBar } from '../components/SearchBar'
 import { ViewToggle, type ViewMode } from '../components/ViewToggle'
 import { ThumbnailCard } from '../components/ThumbnailCard'
 import { ThumbnailRow } from '../components/ThumbnailRow'
 import { SkeletonCard } from '../components/SkeletonCard'
 import { useSearch } from '../hooks/useSearch'
+import { useHistory } from '../hooks/useHistory'
+import { useFavourites } from '../hooks/useFavourites'
+import { useSessionId } from '../contexts/SessionContext'
 import { colors } from '../constants/colors'
-import type { ArtworkCandidate } from '../types/api'
+import type { ArtworkCandidate, ArtworkQuery, HistoryEntry } from '../types/api'
 
 const SKELETON_COUNT = 6
 const MAX_CLARIFICATION_ROUNDS = 2
 
+// ---------------------------------------------------------------------------
+// Recent searches chip strip
+// ---------------------------------------------------------------------------
+
+function HistoryChips({ history, onSelect, onClear }: {
+  history: HistoryEntry[]
+  onSelect: (text: string) => void
+  onClear: () => void
+}) {
+  if (history.length === 0) return null
+  return (
+    <View style={histStyles.container}>
+      <View style={histStyles.header}>
+        <Text style={histStyles.label}>Recent searches</Text>
+        <TouchableOpacity onPress={onClear} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <Text style={histStyles.clearText}>Clear</Text>
+        </TouchableOpacity>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={histStyles.scroll}>
+        {history.slice(0, 8).map((entry, i) => (
+          <TouchableOpacity
+            key={i}
+            style={histStyles.chip}
+            onPress={() => onSelect(entry.query_text)}
+            activeOpacity={0.75}
+          >
+            <Text style={histStyles.chipText} numberOfLines={1}>{entry.query_text}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  )
+}
+
+function IntentCard({ parsedQuery, loading }: { parsedQuery: ArtworkQuery; loading: boolean }) {
+  const confidence = parsedQuery.confidence
+  const confidenceLabel = confidence >= 0.8 ? 'High confidence' : confidence >= 0.5 ? 'Medium confidence' : 'Low confidence'
+  const mainText = parsedQuery.title
+    ? `《${parsedQuery.title}》`
+    : parsedQuery.keywords.slice(0, 3).join(' · ')
+  const meta = [parsedQuery.style, parsedQuery.period].filter(Boolean).join(' · ')
+
+  return (
+    <View style={intentStyles.card}>
+      <View style={intentStyles.row}>
+        <Text style={intentStyles.label}>AI</Text>
+        <Text style={intentStyles.confidence}>{confidenceLabel}</Text>
+        <View style={{ flex: 1 }} />
+        {loading && <ActivityIndicator size="small" color={colors.textMuted} />}
+      </View>
+      <Text style={intentStyles.main}>{mainText}</Text>
+      {parsedQuery.artist ? <Text style={intentStyles.artist}>{parsedQuery.artist}</Text> : null}
+      {meta ? <Text style={intentStyles.meta}>{meta}</Text> : null}
+    </View>
+  )
+}
+
 export default function SearchScreen() {
+  const insets = useSafeAreaInsets()
+  const queryClient = useQueryClient()
+  const sessionId = useSessionId()
   const [query, setQuery] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [roundCount, setRoundCount] = useState(0)
   const [clarificationInput, setClarificationInput] = useState('')
 
-  const { data, isLoading, isError, error } = useSearch(query)
-  const candidates = data?.candidates ?? []
-  const fallbackMode = data?.diagnostics?.fallback_mode ?? null
-  const clarification = roundCount < MAX_CLARIFICATION_ROUNDS ? (data?.clarification ?? null) : null
+  const {
+    parsedQuery,
+    candidates,
+    diagnostics,
+    clarification: rawClarification,
+    intentLoading,
+    candidatesLoading,
+    isError,
+    error,
+    refetch,
+  } = useSearch(query)
+
+  const { history, clear: clearHistory, invalidate: invalidateHistory } = useHistory(sessionId)
+  const { isFavourited, toggleFavourite } = useFavourites(sessionId)
+
+  const isLoading = intentLoading || candidatesLoading
+  const fallbackMode = diagnostics?.fallback_mode ?? null
+  const clarification = roundCount < MAX_CLARIFICATION_ROUNDS ? (rawClarification ?? null) : null
 
   const handleSearch = (text: string) => {
     setQuery(text)
     setRoundCount(0)
     setClarificationInput('')
+    // History is written server-side when the stream completes; invalidate
+    // the cache shortly after so the chips update without a manual refresh.
+    setTimeout(invalidateHistory, 4000)
   }
 
   const handleClarify = () => {
@@ -39,40 +124,48 @@ export default function SearchScreen() {
   }
 
   const handleSelect = (candidate: ArtworkCandidate) => {
+    queryClient.setQueryData(['candidate', candidate.id], candidate)
     router.push({
       pathname: '/artwork/[id]',
-      params: { id: candidate.id, data: JSON.stringify(candidate) },
+      params: { id: candidate.id },
     })
   }
 
+  const toolbarLabel = intentLoading
+    ? 'Identifying...'
+    : candidatesLoading
+    ? 'Searching...'
+    : `${candidates.length} artworks`
+
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'android' ? 'height' : undefined}
+    >
       {/* ── Header ── */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Platform.OS === 'web' ? 56 : insets.top + 16 }]}>
         <Text style={styles.logo}>FindArt</Text>
-        <Text style={styles.tagline}>描述一幅画，找到它的高清原图</Text>
+        <Text style={styles.tagline}>Describe a painting to find its high-res original</Text>
         <SearchBar onSearch={handleSearch} loading={isLoading} />
       </View>
 
       {/* ── Toolbar ── */}
       {(candidates.length > 0 || isLoading) && (
         <View style={styles.toolbar}>
-          <Text style={styles.resultCount}>
-            {isLoading ? '搜索中...' : `${candidates.length} 件作品`}
-          </Text>
+          <Text style={styles.resultCount}>{toolbarLabel}</Text>
           <ViewToggle mode={viewMode} onChange={setViewMode} />
         </View>
       )}
 
       {/* ── Results ── */}
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {isError && (
           <View style={styles.stateBox}>
             <Text style={styles.stateIcon}>⚠️</Text>
-            <Text style={styles.stateTitle}>搜索失败</Text>
+            <Text style={styles.stateTitle}>Search failed</Text>
             <Text style={styles.stateMsg}>{error?.message}</Text>
-            <TouchableOpacity style={styles.retryBtn} onPress={() => setQuery(q => q)}>
-              <Text style={styles.retryText}>重试</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={refetch}>
+              <Text style={styles.retryText}>Retry</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -80,23 +173,35 @@ export default function SearchScreen() {
         {!isLoading && !isError && query.trim().length > 1 && candidates.length === 0 && (
           <View style={styles.stateBox}>
             <Text style={styles.stateIcon}>🔍</Text>
-            <Text style={styles.stateTitle}>未找到匹配作品</Text>
-            <Text style={styles.stateMsg}>换个描述方式试试，例如加上艺术家名字或作品年代</Text>
+            <Text style={styles.stateTitle}>No matching artworks found</Text>
+            <Text style={styles.stateMsg}>Try a different description — add artist, period, or style</Text>
           </View>
         )}
 
         {!query && (
-          <View style={styles.stateBox}>
-            <Text style={styles.stateIcon}>🎨</Text>
-            <Text style={styles.stateTitle}>在上方输入对画作的描述</Text>
-            <Text style={styles.stateMsg}>支持中英文，可以描述画面内容、艺术家、年代或感受</Text>
+          <View>
+            <View style={styles.stateBox}>
+              <Text style={styles.stateIcon}>🎨</Text>
+              <Text style={styles.stateTitle}>Enter a description above</Text>
+              <Text style={styles.stateMsg}>Describe the subject, artist, period, or style</Text>
+            </View>
+            <HistoryChips
+              history={history}
+              onSelect={handleSearch}
+              onClear={clearHistory}
+            />
           </View>
+        )}
+
+        {/* AI intent card — appears as soon as M1 returns, before candidates arrive */}
+        {parsedQuery && query.trim().length > 1 && (
+          <IntentCard parsedQuery={parsedQuery} loading={candidatesLoading} />
         )}
 
         {/* Fallback notice */}
         {fallbackMode && candidates.length > 0 && (
           <View style={styles.fallbackNotice}>
-            <Text style={styles.fallbackText}>未找到精确匹配，以下为相关作品</Text>
+            <Text style={styles.fallbackText}>No exact match — showing related artworks</Text>
           </View>
         )}
 
@@ -108,7 +213,13 @@ export default function SearchScreen() {
                   <SkeletonCard key={i} mode="grid" />
                 ))
               : candidates.map(c => (
-                  <ThumbnailCard key={c.id} candidate={c} onPress={() => handleSelect(c)} />
+                  <ThumbnailCard
+                    key={c.id}
+                    candidate={c}
+                    onPress={() => handleSelect(c)}
+                    isFavourited={isFavourited(c)}
+                    onToggleFavourite={() => toggleFavourite(c)}
+                  />
                 ))}
           </View>
         )}
@@ -121,7 +232,13 @@ export default function SearchScreen() {
                   <SkeletonCard key={i} mode="list" />
                 ))
               : candidates.map(c => (
-                  <ThumbnailRow key={c.id} candidate={c} onPress={() => handleSelect(c)} />
+                  <ThumbnailRow
+                    key={c.id}
+                    candidate={c}
+                    onPress={() => handleSelect(c)}
+                    isFavourited={isFavourited(c)}
+                    onToggleFavourite={() => toggleFavourite(c)}
+                  />
                 ))}
           </View>
         )}
@@ -129,14 +246,14 @@ export default function SearchScreen() {
         {/* Clarification card */}
         {clarification && !isLoading && (
           <View style={styles.clarificationCard}>
-            <Text style={styles.clarificationLabel}>描述更精确可以找到更好的结果</Text>
+            <Text style={styles.clarificationLabel}>A more specific description improves results</Text>
             <Text style={styles.clarificationQuestion}>{clarification.question}</Text>
             <View style={styles.clarificationRow}>
               <TextInput
                 style={styles.clarificationInput}
                 value={clarificationInput}
                 onChangeText={setClarificationInput}
-                placeholder="补充描述..."
+                placeholder="Add more detail..."
                 placeholderTextColor={colors.textMuted}
                 onSubmitEditing={handleClarify}
                 returnKeyType="search"
@@ -147,16 +264,16 @@ export default function SearchScreen() {
                 disabled={!clarificationInput.trim()}
                 activeOpacity={0.7}
               >
-                <Text style={styles.clarificationBtnText}>确认</Text>
+                <Text style={styles.clarificationBtnText}>Submit</Text>
               </TouchableOpacity>
             </View>
             {roundCount > 0 && (
-              <Text style={styles.clarificationRound}>第 {roundCount}/{MAX_CLARIFICATION_ROUNDS} 轮补充</Text>
+              <Text style={styles.clarificationRound}>Round {roundCount} of {MAX_CLARIFICATION_ROUNDS}</Text>
             )}
           </View>
         )}
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   )
 }
 
@@ -167,7 +284,6 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 20,
-    paddingTop: 56,
     paddingBottom: 16,
     gap: 6,
     backgroundColor: colors.surface,
@@ -256,7 +372,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.textPrimary,
     backgroundColor: colors.bg,
-    outlineStyle: 'none',
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   } as any,
   clarificationBtn: {
     height: 40,
@@ -313,5 +429,91 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
+  },
+})
+
+const histStyles = StyleSheet.create({
+  container: {
+    marginHorizontal: 6,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+    marginBottom: 8,
+  },
+  label: {
+    fontSize: 11,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  clearText: {
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  scroll: {
+    paddingHorizontal: 4,
+    gap: 8,
+  },
+  chip: {
+    maxWidth: 200,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chipText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
+})
+
+const intentStyles = StyleSheet.create({
+  card: {
+    marginHorizontal: 6,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 3,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
+  label: {
+    fontSize: 11,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  confidence: {
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  main: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  artist: {
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
+  meta: {
+    fontSize: 11,
+    color: colors.textMuted,
   },
 })
