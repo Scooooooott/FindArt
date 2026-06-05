@@ -4,11 +4,9 @@ import asyncio
 import os
 
 import pytest
-
 from app.models import ArtworkCandidate, ArtworkQuery
 from app.providers import AicProvider, CmaProvider, MetProvider, RijksProvider, WikiProvider
 from app.services.museum import build_museum_search_service
-
 
 pytestmark = pytest.mark.real_api
 

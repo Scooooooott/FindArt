@@ -57,9 +57,9 @@ async def extract_palette(image_url: str, n_colors: int = 8) -> list[str]:
 
 def _extract_palette_sync(image_bytes: bytes, n_colors: int) -> list[str]:
     try:
-        from sklearn.cluster import MiniBatchKMeans
         import numpy as np
         from PIL import Image as PILImage
+        from sklearn.cluster import MiniBatchKMeans
     except ImportError as exc:
         raise RuntimeError(
             "scikit-learn and Pillow are required for palette extraction. "
@@ -89,7 +89,8 @@ def _get_detector():
 
 
 def _fine_lineart(image_bytes: bytes) -> bytes:
-    from PIL import Image as PILImage, ImageOps
+    from PIL import Image as PILImage
+    from PIL import ImageOps
 
     img = PILImage.open(io.BytesIO(image_bytes)).convert("RGB")
     result = _get_detector()(img)

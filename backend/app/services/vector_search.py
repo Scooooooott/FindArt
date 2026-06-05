@@ -272,7 +272,10 @@ def create_vector_search_service() -> QdrantVectorSearchService | DefaultVectorS
             n = service.seed_from_catalog(list(DEFAULT_CATALOG))
             logger.info("Auto-seeded Qdrant with %d items from DEFAULT_CATALOG", n)
         else:
-            logger.info("Qdrant collection has %d existing points (seed skipped unless FINDART_SEED_CATALOG=true)", count)
+            logger.info(
+                "Qdrant collection has %d existing points (seed skipped unless FINDART_SEED_CATALOG=true)",
+                count,
+            )
 
         return service
 

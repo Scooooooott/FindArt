@@ -21,7 +21,6 @@ import asyncio
 import io
 import json
 import logging
-import os
 import sys
 import time
 
@@ -34,6 +33,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 
 from dotenv import load_dotenv
+
 load_dotenv(ROOT / ".env")
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s  %(message)s")
@@ -41,7 +41,6 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s  %(message)s")
 from app.models import ArtworkCandidate  # noqa: E402
 from app.services.museum import build_museum_search_service  # noqa: E402
 from app.services.pipeline import SearchPipeline  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Matching helpers

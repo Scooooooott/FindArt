@@ -5,10 +5,9 @@ import os
 import re
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from app.models import ArtworkQuery
 from app.services.cache import TTLCache
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 

@@ -7,16 +7,20 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 sys.path.insert(0, str(BACKEND))
 
 from app.models import ArtworkCandidate, ArtworkQuery  # noqa: E402
-from app.providers import AicProvider, CmaProvider, MetProvider, RijksProvider, WikiProvider  # noqa: E402
+from app.providers import (  # noqa: E402
+    AicProvider,
+    CmaProvider,
+    MetProvider,
+    RijksProvider,
+    WikiProvider,
+)
 from app.services.aggregation import aggregate_candidates  # noqa: E402
 from app.services.museum import build_museum_search_service  # noqa: E402
-
 
 REAL_CASES: dict[str, ArtworkQuery] = {
     "cma": ArtworkQuery(raw_text="water lilies monet", title="Water Lilies", artist="Monet"),
@@ -145,7 +149,10 @@ def _print_report(report: dict[str, Any]) -> None:
 
         for index, candidate in enumerate(payload["candidates"], start=1):
             print(f"{index}. {candidate['title']} | {candidate.get('artist') or '-'} | {candidate.get('year') or '-'}")
-            print(f"   provider={candidate['provider_id']} id={candidate['id']} image_id={candidate.get('provider_image_id')}")
+            print(
+                f"   provider={candidate['provider_id']} id={candidate['id']}"
+                f" image_id={candidate.get('provider_image_id')}"
+            )
             print(
                 "   image_available="
                 f"{candidate.get('image_available')} free={candidate.get('free_image_available')} "

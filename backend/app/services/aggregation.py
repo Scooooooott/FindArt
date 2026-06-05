@@ -43,11 +43,16 @@ def _quality_score(c: ArtworkCandidate) -> float:
     Values are intentionally small so they only matter when RRF scores are close.
     """
     score = 0.0
-    if c.artist:                    score += 0.003  # card can show artist name
-    if c.year:                      score += 0.001  # card can show date
-    if c.thumbnail_url:             score += 0.003  # card has an image to display
-    if c.free_image_available:      score += 0.002  # high-res image accessible
-    if len(c.matched_sources) > 1:  score += 0.004  # found by multiple retrievers
+    if c.artist:
+        score += 0.003  # card can show artist name
+    if c.year:
+        score += 0.001  # card can show date
+    if c.thumbnail_url:
+        score += 0.003  # card has an image to display
+    if c.free_image_available:
+        score += 0.002  # high-res image accessible
+    if len(c.matched_sources) > 1:
+        score += 0.004  # found by multiple retrievers
     return score
 
 

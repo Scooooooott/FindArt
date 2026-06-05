@@ -52,6 +52,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 
 from dotenv import load_dotenv  # noqa: E402
+
 load_dotenv(ROOT / ".env")
 
 # ---------------------------------------------------------------------------
@@ -359,7 +360,7 @@ def _sleep_countdown(seconds: int) -> None:
     for remaining in range(seconds, 0, -10):
         print(f"\r  {remaining:4d}s remaining…", end="", flush=True)
         time.sleep(min(10, remaining))
-    print(f"\r  done waiting.          ", flush=True)
+    print("\r  done waiting.          ", flush=True)
 
 
 def _sparql_query(query: str) -> list[dict]:
@@ -682,9 +683,12 @@ def _normalize_binding(binding: dict) -> dict | None:
     movement   = binding.get("_movement")
 
     metadata: dict = {}
-    if collection: metadata["collection"] = collection
-    if genre:      metadata["genre"]      = genre
-    if movement:   metadata["movement"]   = movement
+    if collection:
+        metadata["collection"] = collection
+    if genre:
+        metadata["genre"] = genre
+    if movement:
+        metadata["movement"] = movement
 
     return {
         "id":                   wikidata_id,
@@ -778,11 +782,11 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         print(f"ERROR: {CANDIDATES_FILE} not found. Run 'normalize' first.")
         sys.exit(1)
 
+    from app.models import ArtworkCandidate
     from app.services.vector_search import (
         QdrantVectorSearchService,
         create_vector_search_service,
     )
-    from app.models import ArtworkCandidate
 
     svc = create_vector_search_service()
     if not isinstance(svc, QdrantVectorSearchService):

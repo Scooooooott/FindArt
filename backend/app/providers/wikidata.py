@@ -8,7 +8,6 @@ from app.models import ArtworkCandidate, ArtworkQuery
 from app.providers.base import best_query_text, compact_whitespace
 from app.services.http_client import JsonHttpClient, UrllibJsonHttpClient
 
-
 WIKI_USER_AGENT = os.getenv(
     "FINDART_WIKI_USER_AGENT",
     os.getenv(
@@ -226,7 +225,6 @@ class WikiProvider:
 
 
 def _build_sparql(query: ArtworkQuery, limit: int) -> str:
-    text = _sparql_string(best_query_text(query))
     artist_filter = ""
     if query.artist:
         artist = _sparql_string(query.artist)

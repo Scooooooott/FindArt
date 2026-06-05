@@ -6,11 +6,21 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 
-from app.models import ArtworkCandidate, ArtworkQuery, ClarificationHint, SearchDiagnostics, SearchResponse
+from app.models import (
+    ArtworkCandidate,
+    ArtworkQuery,
+    ClarificationHint,
+    SearchDiagnostics,
+    SearchResponse,
+)
 from app.services.aggregation import aggregate_candidates
 from app.services.intent import IntentParser, create_intent_parser
 from app.services.museum import MuseumSearchService
-from app.services.vector_search import QdrantVectorSearchService, VectorSearchService, create_vector_search_service
+from app.services.vector_search import (
+    QdrantVectorSearchService,
+    VectorSearchService,
+    create_vector_search_service,
+)
 
 # Minimum candidate count before each fallback strategy activates
 _THRESHOLD_RELAX    = 3   # fewer than this → try relaxed vector threshold
