@@ -9,14 +9,14 @@ import Animated, {
 } from 'react-native-reanimated'
 
 interface Props {
-  source: string
-  alt?: string
-  gridDivisions?: number
-  imgRef?: any       // web-only, ignored on native
-  isFullscreen?: boolean  // web-only, ignored on native
+  readonly source: string
+  readonly alt?: string
+  readonly gridDivisions?: number
+  readonly imgRef?: any       // web-only, ignored on native
+  readonly isFullscreen?: boolean  // web-only, ignored on native
 }
 
-function GridOverlay({ divisions }: { divisions: number }) {
+function GridOverlay({ divisions }: { readonly divisions: number }) {
   const lines: React.ReactElement[] = []
   for (let i = 1; i < divisions; i++) {
     const pct = `${(i / divisions) * 100}%` as any

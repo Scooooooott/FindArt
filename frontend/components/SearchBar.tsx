@@ -3,8 +3,8 @@ import { View, TextInput, TouchableOpacity, Text, StyleSheet, ActivityIndicator,
 import { colors } from '../constants/colors'
 
 interface Props {
-  onSearch: (text: string) => void
-  loading?: boolean
+  readonly onSearch: (text: string) => void
+  readonly loading?: boolean
 }
 
 export function SearchBar({ onSearch, loading }: Props) {

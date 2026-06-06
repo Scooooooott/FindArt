@@ -2,7 +2,7 @@ import { View, StyleSheet } from 'react-native'
 import { colors } from '../constants/colors'
 
 interface Props {
-  mode: 'grid' | 'list'
+  readonly mode: 'grid' | 'list'
 }
 
 export function SkeletonCard({ mode }: Props) {

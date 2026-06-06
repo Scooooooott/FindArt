@@ -67,9 +67,9 @@ def merge_candidates(
         | {existing.source_api, incoming.source_api}
     )
     replacement = existing
-    if not existing.thumbnail_url and incoming.thumbnail_url:
-        replacement = incoming
-    elif not existing.image_url and incoming.image_url:
+    if (not existing.thumbnail_url and incoming.thumbnail_url) or (
+        not existing.image_url and incoming.image_url
+    ):
         replacement = incoming
 
     metadata = dict(existing.metadata)

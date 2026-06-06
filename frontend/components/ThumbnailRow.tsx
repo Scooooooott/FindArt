@@ -3,10 +3,10 @@ import { colors } from '../constants/colors'
 import type { ArtworkCandidate } from '../types/api'
 
 interface Props {
-  candidate: ArtworkCandidate
-  onPress: () => void
-  isFavourited?: boolean
-  onToggleFavourite?: () => void
+  readonly candidate: ArtworkCandidate
+  readonly onPress: () => void
+  readonly isFavourited?: boolean
+  readonly onToggleFavourite?: () => void
 }
 
 export function ThumbnailRow({ candidate, onPress, isFavourited, onToggleFavourite }: Props) {

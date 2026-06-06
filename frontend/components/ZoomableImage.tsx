@@ -3,14 +3,14 @@ import { View, TouchableOpacity, Text, StyleSheet } from 'react-native'
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
 
 interface Props {
-  source: string
-  alt?: string
-  gridDivisions?: number
-  imgRef?: React.MutableRefObject<HTMLImageElement | null>
-  isFullscreen?: boolean
+  readonly source: string
+  readonly alt?: string
+  readonly gridDivisions?: number
+  readonly imgRef?: React.MutableRefObject<HTMLImageElement | null>
+  readonly isFullscreen?: boolean
 }
 
-function GridOverlay({ divisions }: { divisions: number }) {
+function GridOverlay({ divisions }: { readonly divisions: number }) {
   const lines: React.ReactElement[] = []
   for (let i = 1; i < divisions; i++) {
     const pct = `${(i / divisions) * 100}%`

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Annotated, Any
 
 from dotenv import load_dotenv
 
@@ -114,6 +115,37 @@ async def _safe_task(coro) -> None:
         logger.warning("Background task failed: %s", exc)
 
 
+# Strong references prevent fire-and-forget tasks from being GC'd before completion.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _create_background_task(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+# ---------------------------------------------------------------------------
+# Dependency type aliases  (Annotated pattern — FastAPI 0.95+ recommendation)
+# ---------------------------------------------------------------------------
+
+DbDep = Annotated[Any, Depends(get_db)]
+SessionIdDep = Annotated[str | None, Depends(get_session_id)]
+
+# Reusable responses dicts for OpenAPI documentation
+_R_SESSION = {
+    400: {"description": "Invalid or missing session ID"},
+    503: {"description": "Session storage not configured (DATABASE_URL unset)"},
+}
+_R_STYLE = {
+    502: {"description": "Failed to fetch image from upstream source"},
+    503: {"description": "Style transfer dependency unavailable"},
+}
+_R_RESOLVE = {
+    404: {"description": "Image could not be resolved for this artwork"},
+}
+
+
 # ---------------------------------------------------------------------------
 # Core routes
 # ---------------------------------------------------------------------------
@@ -123,18 +155,18 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/search", response_model=SearchResponse)
+@app.post("/search")
 @limiter.limit("20/minute")
 async def search(
     request: Request,
     body: SearchRequest,
-    db=Depends(get_db),
-    session_id: str | None = Depends(get_session_id),
+    db: DbDep,
+    session_id: SessionIdDep,
 ) -> SearchResponse:
     result = await pipeline.search(text=body.text, limit=body.limit)
     if db is not None and session_id:
-        asyncio.create_task(_safe_task(session_service.upsert_session(db, session_id)))
-        asyncio.create_task(_safe_task(session_service.log_search(
+        _create_background_task(_safe_task(session_service.upsert_session(db, session_id)))
+        _create_background_task(_safe_task(session_service.log_search(
             db, session_id, body.text,
             result.query.model_dump(),
             len(result.candidates),
@@ -148,8 +180,8 @@ async def search(
 async def search_stream(
     request: Request,
     body: SearchRequest,
-    db=Depends(get_db),
-    session_id: str | None = Depends(get_session_id),
+    db: DbDep,
+    session_id: SessionIdDep,
 ) -> StreamingResponse:
     async def generate():
         result_snapshot: dict = {}
@@ -167,10 +199,10 @@ async def search_stream(
 
         # After stream completes: fire-and-forget session touch + history write
         if db is not None and session_id and result_snapshot:
-            asyncio.create_task(_safe_task(
+            _create_background_task(_safe_task(
                 session_service.upsert_session(db, session_id)
             ))
-            asyncio.create_task(_safe_task(session_service.log_search(
+            _create_background_task(_safe_task(session_service.log_search(
                 db,
                 session_id,
                 body.text,
@@ -190,7 +222,7 @@ async def search_stream(
 # Style transfer routes
 # ---------------------------------------------------------------------------
 
-@app.post("/artworks/palette", response_model=PaletteResponse)
+@app.post("/artworks/palette", responses=_R_STYLE)
 @limiter.limit("20/minute")
 async def extract_palette(request: Request, body: PaletteRequest) -> PaletteResponse:
     try:
@@ -202,7 +234,7 @@ async def extract_palette(request: Request, body: PaletteRequest) -> PaletteResp
         raise HTTPException(status_code=502, detail=f"Image fetch error: {exc.response.status_code}") from exc
 
 
-@app.post("/artworks/lineart", response_model=LineartResponse)
+@app.post("/artworks/lineart", responses=_R_STYLE)
 @limiter.limit("10/minute")
 async def generate_lineart(request: Request, body: LineartRequest) -> LineartResponse:
     try:
@@ -214,7 +246,7 @@ async def generate_lineart(request: Request, body: LineartRequest) -> LineartRes
         raise HTTPException(status_code=502, detail=f"Image fetch error: {exc.response.status_code}") from exc
 
 
-@app.post("/artworks/resolve-image", response_model=ArtworkImage)
+@app.post("/artworks/resolve-image", responses=_R_RESOLVE)
 async def resolve_image(request: Request, body: ResolveImageRequest) -> ArtworkImage:
     try:
         return await image_resolver.resolve(
@@ -240,11 +272,11 @@ def _require_valid_session(session_id: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid session ID")
 
 
-@app.get("/sessions/{session_id}/history", response_model=HistoryResponse)
+@app.get("/sessions/{session_id}/history", responses=_R_SESSION)
 async def get_history(
     session_id: str,
+    db: DbDep,
     limit: int = 20,
-    db=Depends(get_db),
 ) -> HistoryResponse:
     _require_db(db)
     _require_valid_session(session_id)
@@ -252,20 +284,20 @@ async def get_history(
     return HistoryResponse(history=entries)
 
 
-@app.delete("/sessions/{session_id}/history", status_code=204)
+@app.delete("/sessions/{session_id}/history", status_code=204, responses=_R_SESSION)
 async def clear_history(
     session_id: str,
-    db=Depends(get_db),
+    db: DbDep,
 ) -> None:
     _require_db(db)
     _require_valid_session(session_id)
     await session_service.clear_history(db, session_id)
 
 
-@app.get("/sessions/{session_id}/favourites", response_model=FavouritesResponse)
+@app.get("/sessions/{session_id}/favourites", responses=_R_SESSION)
 async def get_favourites(
     session_id: str,
-    db=Depends(get_db),
+    db: DbDep,
 ) -> FavouritesResponse:
     _require_db(db)
     _require_valid_session(session_id)
@@ -273,11 +305,11 @@ async def get_favourites(
     return FavouritesResponse(favourites=favs)
 
 
-@app.post("/sessions/{session_id}/favourites", status_code=201)
+@app.post("/sessions/{session_id}/favourites", status_code=201, responses=_R_SESSION)
 async def add_favourite(
     session_id: str,
     body: AddFavouriteRequest,
-    db=Depends(get_db),
+    db: DbDep,
 ) -> None:
     _require_db(db)
     _require_valid_session(session_id)
@@ -285,22 +317,22 @@ async def add_favourite(
     await session_service.add_favourite(db, session_id, body.candidate.model_dump())
 
 
-@app.delete("/sessions/{session_id}/favourites/{artwork_id}/{source_api}", status_code=204)
+@app.delete("/sessions/{session_id}/favourites/{artwork_id}/{source_api}", status_code=204, responses=_R_SESSION)
 async def remove_favourite(
     session_id: str,
     artwork_id: str,
     source_api: str,
-    db=Depends(get_db),
+    db: DbDep,
 ) -> None:
     _require_db(db)
     _require_valid_session(session_id)
     await session_service.remove_favourite(db, session_id, artwork_id, source_api)
 
 
-@app.delete("/sessions/{session_id}", status_code=204)
+@app.delete("/sessions/{session_id}", status_code=204, responses=_R_SESSION)
 async def delete_session(
     session_id: str,
-    db=Depends(get_db),
+    db: DbDep,
 ) -> None:
     _require_db(db)
     _require_valid_session(session_id)

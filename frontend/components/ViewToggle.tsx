@@ -4,8 +4,8 @@ import { colors } from '../constants/colors'
 export type ViewMode = 'grid' | 'list'
 
 interface Props {
-  mode: ViewMode
-  onChange: (mode: ViewMode) => void
+  readonly mode: ViewMode
+  readonly onChange: (mode: ViewMode) => void
 }
 
 export function ViewToggle({ mode, onChange }: Props) {

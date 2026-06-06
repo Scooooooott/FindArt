@@ -80,54 +80,65 @@ def reciprocal_rank(
 # Evaluation runner
 # ---------------------------------------------------------------------------
 
+async def _run_case(
+    pipeline: SearchPipeline,
+    case: dict,
+) -> tuple[dict, list[ArtworkCandidate] | None]:
+    """Run a single eval case. Returns (row_dict, candidates) or (error_row, None)."""
+    text = case["input"]
+    exp_title = case.get("expected_title")
+    exp_artist = case.get("expected_artist")
+    category = case.get("category", "")
+
+    try:
+        t0 = time.perf_counter()
+        response = await pipeline.search(text, limit=5)
+        elapsed_ms = round((time.perf_counter() - t0) * 1000)
+    except Exception as exc:
+        return {
+            "input": text, "category": category,
+            "h1": False, "h3": False, "h5": False, "rr": 0.0,
+            "fallback": "error", "ms": 0, "n": 0,
+            "error": str(exc),
+        }, None
+
+    candidates = response.candidates
+    return {
+        "input": text, "category": category,
+        "h1": any(is_match(c, exp_title, exp_artist) for c in candidates[:1]),
+        "h3": any(is_match(c, exp_title, exp_artist) for c in candidates[:3]),
+        "h5": any(is_match(c, exp_title, exp_artist) for c in candidates[:5]),
+        "rr": reciprocal_rank(candidates, exp_title, exp_artist),
+        "fallback": response.diagnostics.fallback_mode or "-",
+        "ms": elapsed_ms,
+        "n": len(candidates),
+    }, candidates
+
+
 async def run_evaluation(cases: list[dict], verbose: bool) -> None:
     pipeline = SearchPipeline(
         museum_search=build_museum_search_service(include_default=False)
     )
-
     rows: list[dict] = []
 
     for i, case in enumerate(cases, 1):
-        text = case["input"]
-        exp_title = case.get("expected_title")
-        exp_artist = case.get("expected_artist")
-        category = case.get("category", "")
+        print(f"[{i}/{len(cases)}] {case['input']} ...", end=" ", flush=True)
+        row, candidates = await _run_case(pipeline, case)
+        rows.append(row)
 
-        print(f"[{i}/{len(cases)}] {text} ...", end=" ", flush=True)
-
-        try:
-            t0 = time.perf_counter()
-            response = await pipeline.search(text, limit=5)
-            elapsed_ms = round((time.perf_counter() - t0) * 1000)
-        except Exception as exc:
-            print(f"ERROR: {exc}")
-            rows.append({
-                "input": text, "category": category,
-                "h1": False, "h3": False, "h5": False, "rr": 0.0,
-                "fallback": "error", "ms": 0, "n": 0,
-                "error": str(exc),
-            })
+        if candidates is None:
+            print(f"ERROR: {row['error']}")
             continue
 
-        candidates = response.candidates
-        h1 = any(is_match(c, exp_title, exp_artist) for c in candidates[:1])
-        h3 = any(is_match(c, exp_title, exp_artist) for c in candidates[:3])
-        h5 = any(is_match(c, exp_title, exp_artist) for c in candidates[:5])
-        rr = reciprocal_rank(candidates, exp_title, exp_artist)
-        fallback = response.diagnostics.fallback_mode or "-"
-
-        print(f"H@1={'Y' if h1 else 'N'}  H@3={'Y' if h3 else 'N'}  H@5={'Y' if h5 else 'N'}  {elapsed_ms}ms")
+        h1, h3, h5 = row["h1"], row["h3"], row["h5"]
+        print(f"H@1={'Y' if h1 else 'N'}  H@3={'Y' if h3 else 'N'}  H@5={'Y' if h5 else 'N'}  {row['ms']}ms")
 
         if verbose and candidates:
+            exp_title = case.get("expected_title")
+            exp_artist = case.get("expected_artist")
             for rank, c in enumerate(candidates[:3], 1):
                 marker = "+" if is_match(c, exp_title, exp_artist) else " "
                 print(f"    {marker} #{rank} {c.title!r}  {c.artist or '?'}  [{c.source_api}]")
-
-        rows.append({
-            "input": text, "category": category,
-            "h1": h1, "h3": h3, "h5": h5, "rr": rr,
-            "fallback": fallback, "ms": elapsed_ms, "n": len(candidates),
-        })
 
     _print_summary(rows)
 

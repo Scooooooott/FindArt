@@ -213,85 +213,69 @@ def _search_page(offset: int, limit: int) -> tuple[list[str], bool]:
     return qids, has_more
 
 
-def _enrich_bindings(bindings: list[dict]) -> list[dict]:
-    """Add labels and claims to minimal bindings via wbgetentities (batches of 50).
+def _wbgetentities(ids: list[str], props: str) -> dict[str, dict]:
+    """Batch-fetch Wikidata entities via wbgetentities. Returns {qid: entity_dict}.
 
-    Enriches each binding in-place with underscore-prefixed keys:
-      _qid, _label, _creator, _date, _image_filename,
-      _collection, _genre, _movement
-
-    Uses two rounds of wbgetentities:
-      Round 1 — fetch painting entities (labels + claims) to get title, image,
-                date, and the Q-IDs of creator/collection/genre/movement.
-      Round 2 — fetch those related Q-IDs to resolve their English labels.
-    The original code tried to look up related Q-IDs inside the painting
-    response, but they are never included there, so _creator was always None.
+    Silently skips failed chunks (logs a warning) and rate-limits between batches.
     """
-    qid_map: dict[str, dict] = {}
-    for b in bindings:
-        qid = b.get("_qid")
-        if qid and qid.startswith("Q"):
-            qid_map[qid] = b
-
-    qids = list(qid_map.keys())
-
-    # ── Round 1: fetch painting entities ──────────────────────────────────
-    painting_entities: dict[str, dict] = {}
-    for i in range(0, len(qids), _ENTITY_BATCH):
-        chunk = qids[i: i + _ENTITY_BATCH]
+    result: dict[str, dict] = {}
+    for i in range(0, len(ids), _ENTITY_BATCH):
+        chunk = ids[i : i + _ENTITY_BATCH]
         try:
             data = _http_get_json(
                 _MW_ENDPOINT,
                 {
                     "action":           "wbgetentities",
                     "ids":              "|".join(chunk),
-                    "props":            "labels|claims",
+                    "props":            props,
                     "languages":        "en",
                     "languagefallback": "1",
                     "format":           "json",
                     "formatversion":    "2",
                 },
             )
-            painting_entities.update(data.get("entities") or {})
+            result.update(data.get("entities") or {})
         except Exception as exc:
             print(f"  wbgetentities batch failed: {exc} — skipping {len(chunk)} items")
             time.sleep(2)
-            continue
         time.sleep(_SLEEP_ENTITY)
+    return result
 
-    # ── Round 2: resolve related entity labels ─────────────────────────────
-    # Collect all Q-IDs referenced by P170/P195/P136/P135 claims.
-    related_ids: set[str] = set()
+
+def _collect_related_ids(painting_entities: dict[str, dict]) -> list[str]:
+    """Return Q-IDs of creator/collection/genre/movement referenced by painting entities."""
+    related: set[str] = set()
     for entity in painting_entities.values():
         for pid in ("P170", "P195", "P136", "P135"):
             rid = _claim_entity_id(entity, pid)
             if rid:
-                related_ids.add(rid)
+                related.add(rid)
+    return list(related)
 
-    related_labels: dict[str, str | None] = {}
-    related_list = list(related_ids)
-    for i in range(0, len(related_list), _ENTITY_BATCH):
-        batch = related_list[i: i + _ENTITY_BATCH]
-        try:
-            rel_data = _http_get_json(
-                _MW_ENDPOINT,
-                {
-                    "action":           "wbgetentities",
-                    "ids":              "|".join(batch),
-                    "props":            "labels",
-                    "languages":        "en",
-                    "languagefallback": "1",
-                    "format":           "json",
-                    "formatversion":    "2",
-                },
-            )
-            for rid, rentity in (rel_data.get("entities") or {}).items():
-                related_labels[rid] = _entity_label(rentity)
-        except Exception as exc:
-            print(f"  Related entities batch failed: {exc} — skipping")
-        time.sleep(_SLEEP_ENTITY)
 
-    # ── Populate bindings using resolved data ──────────────────────────────
+def _enrich_bindings(bindings: list[dict]) -> list[dict]:
+    """Add labels and claims to minimal bindings via wbgetentities (batches of 50).
+
+    Enriches each binding in-place with underscore-prefixed keys:
+      _label, _creator, _date, _image_filename, _collection, _genre, _movement
+
+    Round 1 — fetch painting entities (labels + claims).
+    Round 2 — fetch related Q-IDs (creator, collection, genre, movement) to resolve labels.
+    """
+    qid_map = {
+        b["_qid"]: b
+        for b in bindings
+        if b.get("_qid", "").startswith("Q")
+    }
+
+    # Round 1: painting entities (labels + claims)
+    painting_entities = _wbgetentities(list(qid_map.keys()), "labels|claims")
+
+    # Round 2: labels for related entities (creator, collection, genre, movement)
+    related_entities = _wbgetentities(_collect_related_ids(painting_entities), "labels")
+    related_labels = {rid: _entity_label(e) for rid, e in related_entities.items()}
+
+    # Merge resolved data back into each binding
     for qid, entity in painting_entities.items():
         if qid not in qid_map:
             continue
@@ -299,16 +283,10 @@ def _enrich_bindings(bindings: list[dict]) -> list[dict]:
         b["_label"]          = _entity_label(entity)
         b["_image_filename"] = _claim_str(entity, "P18")
         b["_date"]           = _claim_str(entity, "P571")
-
-        creator_id    = _claim_entity_id(entity, "P170")
-        collection_id = _claim_entity_id(entity, "P195")
-        genre_id      = _claim_entity_id(entity, "P136")
-        movement_id   = _claim_entity_id(entity, "P135")
-
-        b["_creator"]    = related_labels.get(creator_id)    if creator_id    else None
-        b["_collection"] = related_labels.get(collection_id) if collection_id else None
-        b["_genre"]      = related_labels.get(genre_id)      if genre_id      else None
-        b["_movement"]   = related_labels.get(movement_id)   if movement_id   else None
+        b["_creator"]        = related_labels.get(_claim_entity_id(entity, "P170"))
+        b["_collection"]     = related_labels.get(_claim_entity_id(entity, "P195"))
+        b["_genre"]          = related_labels.get(_claim_entity_id(entity, "P136"))
+        b["_movement"]       = related_labels.get(_claim_entity_id(entity, "P135"))
 
     return bindings
 
@@ -481,6 +459,31 @@ def _normalize_sparql_binding(b: dict) -> dict | None:
     }
 
 
+def _write_sparql_candidates(
+    bindings: list[dict],
+    seen: set[str],
+    out,
+    limit: int,
+    total: int,
+) -> tuple[int, int]:
+    """Normalise and write new candidates from one SPARQL batch.
+
+    Returns (written_this_batch, new_total).
+    """
+    written = 0
+    for b in bindings:
+        if limit and total >= limit:
+            break
+        candidate = _normalize_sparql_binding(b)
+        if candidate is None or candidate["id"] in seen:
+            continue
+        out.write(json.dumps(candidate, ensure_ascii=False) + "\n")
+        seen.add(candidate["id"])
+        written += 1
+        total += 1
+    return written, total
+
+
 def cmd_fetch_sparql(args: argparse.Namespace) -> None:
     """Fetch paintings for curated artist list via SPARQL → sparql_candidates.jsonl.
 
@@ -527,18 +530,7 @@ def cmd_fetch_sparql(args: argparse.Namespace) -> None:
                 print(f"FAILED ({exc}) — skipping batch")
                 continue
 
-            written = 0
-            for b in bindings:
-                if limit and total >= limit:
-                    break
-                candidate = _normalize_sparql_binding(b)
-                if candidate is None or candidate["id"] in seen:
-                    continue
-                out.write(json.dumps(candidate, ensure_ascii=False) + "\n")
-                seen.add(candidate["id"])
-                written += 1
-                total += 1
-
+            written, total = _write_sparql_candidates(bindings, seen, out, limit, total)
             print(f"{written} new  (total {total})")
 
             if batch_no < n_batches and not (limit and total >= limit):
@@ -548,18 +540,46 @@ def cmd_fetch_sparql(args: argparse.Namespace) -> None:
     print("Next: python scripts/build_vector_index.py")
 
 
-def cmd_fetch(args: argparse.Namespace) -> None:
-    DATA_DIR.mkdir(exist_ok=True)
-
-    offset        = 0
-    total_fetched = 0
-
+def _resume_fetch_state(args: argparse.Namespace) -> tuple[int, int]:
+    """Load fetch checkpoint if --resume is set. Returns (offset, total_fetched)."""
     if args.resume and PROGRESS_FILE.exists():
         prog = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
         if prog.get("phase") == "fetch":
             offset        = prog.get("offset", 0)
             total_fetched = prog.get("total_fetched", 0)
             print(f"Resuming from offset {offset} ({total_fetched} already fetched)")
+            return offset, total_fetched
+    return 0, 0
+
+
+def _fetch_and_enrich_page(offset: int, page_size: int) -> tuple[list[dict], bool, int]:
+    """One CirrusSearch page → enriched+filtered bindings.
+
+    Returns (bindings_with_image, has_more, raw_qid_count).
+    raw_qid_count drives offset advancement even when some items are filtered out.
+    """
+    qids, has_more = _search_page(offset, page_size)
+    if not qids:
+        return [], False, 0
+
+    print(f"  Enriching {len(qids)} items…")
+    bindings = [
+        {"_qid": qid, "item": {"value": f"http://www.wikidata.org/entity/{qid}"}}
+        for qid in qids
+    ]
+    bindings = _enrich_bindings(bindings)
+
+    before   = len(bindings)
+    bindings = [b for b in bindings if b.get("_image_filename")]
+    if before != len(bindings):
+        print(f"  Dropped {before - len(bindings)} items without image filename")
+
+    return bindings, has_more, len(qids)
+
+
+def cmd_fetch(args: argparse.Namespace) -> None:
+    DATA_DIR.mkdir(exist_ok=True)
+    offset, total_fetched = _resume_fetch_state(args)
 
     if not args.resume and RAW_FILE.exists():
         RAW_FILE.unlink()
@@ -576,34 +596,16 @@ def cmd_fetch(args: argparse.Namespace) -> None:
             print(f"Searching offset={offset}, page_size={page_size} "
                   f"(total so far: {total_fetched})…")
 
-            # Step A: CirrusSearch → Q-IDs
-            qids, has_more = _search_page(offset, page_size)
-            if not qids:
+            bindings, has_more, raw_count = _fetch_and_enrich_page(offset, page_size)
+            if not raw_count:
                 print("No more results.")
                 break
-
-            # Step B: wbgetentities → enriched bindings
-            print(f"  Enriching {len(qids)} items…")
-            bindings = [
-                {
-                    "_qid":  qid,
-                    "item":  {"value": f"http://www.wikidata.org/entity/{qid}"},
-                }
-                for qid in qids
-            ]
-            bindings = _enrich_bindings(bindings)
-
-            # Filter: only keep items that got an image filename
-            before = len(bindings)
-            bindings = [b for b in bindings if b.get("_image_filename")]
-            if before != len(bindings):
-                print(f"  Dropped {before - len(bindings)} items without image filename")
 
             for b in bindings:
                 out.write(json.dumps(b, ensure_ascii=False) + "\n")
 
             total_fetched += len(bindings)
-            offset        += len(qids)    # advance by raw page size
+            offset        += raw_count
 
             PROGRESS_FILE.write_text(json.dumps({
                 "phase":         "fetch",
@@ -777,6 +779,30 @@ def cmd_normalize(args: argparse.Namespace) -> None:
 # Phase 3 — INGEST
 # ---------------------------------------------------------------------------
 
+def _load_ingest_progress(args: argparse.Namespace) -> tuple[int, int]:
+    """Load ingest checkpoint if --resume is set. Returns (start_offset, already_upserted)."""
+    if args.resume and PROGRESS_FILE.exists():
+        prog = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
+        if prog.get("phase") == "ingest":
+            start_offset = prog.get("ingest_offset", 0)
+            already      = prog.get("ingest_total", 0)
+            print(f"Resuming ingest from line {start_offset} ({already} already upserted)")
+            return start_offset, already
+    return 0, 0
+
+
+def _flush_ingest_batch(svc, batch: list, line_no: int, total_so_far: int) -> int:
+    """Upsert batch to Qdrant, save progress, and clear the batch. Returns count upserted."""
+    n = svc.seed_from_candidates(batch)
+    batch.clear()
+    PROGRESS_FILE.write_text(json.dumps({
+        "phase":         "ingest",
+        "ingest_offset": line_no + 1,
+        "ingest_total":  total_so_far + n,
+    }), encoding="utf-8")
+    return n
+
+
 def cmd_ingest(args: argparse.Namespace) -> None:
     if not CANDIDATES_FILE.exists():
         print(f"ERROR: {CANDIDATES_FILE} not found. Run 'normalize' first.")
@@ -797,31 +823,14 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    limit      = args.limit or 0
-    batch_size = args.batch_size
-
-    start_offset = 0
-    if args.resume and PROGRESS_FILE.exists():
-        prog = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
-        if prog.get("phase") == "ingest":
-            start_offset = prog.get("ingest_offset", 0)
-            already      = prog.get("ingest_total", 0)
-            print(f"Resuming ingest from line {start_offset} ({already} already upserted)")
+    limit        = args.limit or 0
+    batch_size   = args.batch_size
+    start_offset, _ = _load_ingest_progress(args)
 
     batch: list[ArtworkCandidate] = []
-    total  = 0
-    errors = 0
+    total   = 0
+    errors  = 0
     line_no = max(start_offset - 1, 0)
-
-    def _flush(b: list[ArtworkCandidate], current_line: int) -> int:
-        n = svc.seed_from_candidates(b)
-        b.clear()
-        PROGRESS_FILE.write_text(json.dumps({
-            "phase":         "ingest",
-            "ingest_offset": current_line + 1,
-            "ingest_total":  total + n,
-        }), encoding="utf-8")
-        return n
 
     with CANDIDATES_FILE.open(encoding="utf-8") as f:
         for line_no, line in enumerate(f):
@@ -837,11 +846,11 @@ def cmd_ingest(args: argparse.Namespace) -> None:
                 continue
 
             if len(batch) >= batch_size:
-                total += _flush(batch, line_no)
+                total += _flush_ingest_batch(svc, batch, line_no, total)
                 print(f"  {total} upserted…", end="\r", flush=True)
 
         if batch:
-            total += _flush(batch, line_no)
+            total += _flush_ingest_batch(svc, batch, line_no, total)
 
     print(f"\nIngest done.  {total} candidates upserted  ({errors} parse errors).")
 
