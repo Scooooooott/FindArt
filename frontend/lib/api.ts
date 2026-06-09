@@ -68,6 +68,14 @@ export async function generateLineart(imageUrl: string, mode: 'canny' | 'fine' =
   return `data:image/png;base64,${lineart_b64}`
 }
 
+export async function searchImage(
+  imageBase64: string,
+  mimeType: string,
+  limit = 8,
+): Promise<SearchResponse> {
+  return post<SearchResponse>('/search/image', { image_base64: imageBase64, mime_type: mimeType, limit })
+}
+
 // ---------------------------------------------------------------------------
 // SSE streaming search
 // ---------------------------------------------------------------------------

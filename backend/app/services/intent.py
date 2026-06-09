@@ -175,6 +175,59 @@ class LLMIntentParser:
         self._cache.set(cache_key, result)
         return result
 
+    async def parse_image(self, image_base64: str, mime_type: str) -> ArtworkQuery:
+        """Identify a painting from an uploaded image using Gemini Vision."""
+        import hashlib
+        cache_key = f"img:{hashlib.sha256(image_base64[:256].encode()).hexdigest()[:16]}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            result = await self._call_gemini_vision(image_base64, mime_type)
+        except Exception as exc:
+            logger.warning("Gemini vision parse failed (%s), returning generic query", exc)
+            result = ArtworkQuery(raw_text="[image upload]", keywords=[], confidence=0.3)
+
+        self._cache.set(cache_key, result)
+        return result
+
+    async def _call_gemini_vision(self, image_base64: str, mime_type: str) -> ArtworkQuery:
+        import base64 as _base64
+        image_bytes = _base64.b64decode(image_base64)
+        image_part = self._types.Part(
+            inline_data=self._types.Blob(mime_type=mime_type, data=image_bytes)
+        )
+        text_part = self._types.Part(text="Identify this painting and extract the artwork details.")
+
+        config = self._types.GenerateContentConfig(
+            system_instruction=_SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            response_schema=_ParsedIntent,
+        )
+        response = await self._client.aio.models.generate_content(
+            model=self._model,
+            contents=[image_part, text_part],
+            config=config,
+        )
+        if not response.text:
+            raise ValueError("Empty response from Gemini Vision")
+
+        parsed = _ParsedIntent.model_validate_json(response.text)
+        confidence = max(0.0, min(1.0, parsed.confidence))
+
+        return ArtworkQuery(
+            raw_text="[image upload]",
+            title=parsed.title,
+            artist=parsed.artist,
+            period=parsed.period,
+            style=parsed.style,
+            medium=parsed.medium,
+            keywords=parsed.keywords,
+            confidence=confidence,
+            ambiguity_dimensions=parsed.ambiguity_dimensions,
+        )
+
     async def _call_gemini(self, text: str) -> ArtworkQuery:
         config = self._types.GenerateContentConfig(
             system_instruction=_SYSTEM_PROMPT,

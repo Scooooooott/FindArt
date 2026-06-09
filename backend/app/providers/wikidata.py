@@ -123,11 +123,22 @@ class WikiProvider:
                 titles.append(_commons_title(filename))
         pages = await self.resolve_commons_titles(titles)
 
-        return [
+        candidates = [
             self._to_wikidata_candidate(binding, pages)
             for binding in bindings[:limit]
             if isinstance(binding, dict)
         ]
+
+        # For title-based queries the SPARQL artist filter is intentionally omitted
+        # (see _build_sparql). Apply it here via casefold comparison — handles accented
+        # names correctly and falls back to all candidates if artist data is missing.
+        if query.title and query.artist:
+            artist_lower = query.artist.casefold()
+            matched = [c for c in candidates if c.artist and artist_lower in c.artist.casefold()]
+            if matched:
+                return matched
+
+        return candidates
 
     async def resolve_commons_titles(self, titles: list[str]) -> dict[str, dict[str, Any]]:
         normalized_titles = [_normalize_commons_title(title) for title in titles if title]
@@ -225,21 +236,14 @@ class WikiProvider:
 
 
 def _build_sparql(query: ArtworkQuery, limit: int) -> str:
-    artist_filter = ""
-    if query.artist:
-        artist = _sparql_string(query.artist)
-        artist_filter = f"""
-  ?item wdt:P170 ?creator.
-  ?creator rdfs:label ?creatorFilterLabel.
-  FILTER(LANG(?creatorFilterLabel) = "en")
-  FILTER(CONTAINS(LCASE(STR(?creatorFilterLabel)), "{artist}"))
-"""
-    else:
-        artist_filter = "  OPTIONAL { ?item wdt:P170 ?creator. }\n"
-
     if query.title:
         title = _sparql_literal(query.title)
         item_selector = f'  ?item rdfs:label "{title}"@en.'
+        # When an exact title is known, skip the SPARQL artist CONTAINS filter:
+        # accented names like "Dalí" trigger Unicode NFC/NFD mismatches between
+        # Python casefold and Wikidata SPARQL LCASE, silently returning zero results.
+        # Artist verification is done in Python after the SPARQL response arrives.
+        artist_filter = "  OPTIONAL { ?item wdt:P170 ?creator. }\n"
     else:
         mwapi_search = _sparql_literal(best_query_text(query))
         item_selector = f"""
@@ -251,6 +255,16 @@ def _build_sparql(query: ArtworkQuery, limit: int) -> str:
     ?item wikibase:apiOutputItem mwapi:item.
   }}
 """.rstrip()
+        if query.artist:
+            artist = _sparql_string(query.artist)
+            artist_filter = f"""
+  ?item wdt:P170 ?creator.
+  ?creator rdfs:label ?creatorFilterLabel.
+  FILTER(LANG(?creatorFilterLabel) = "en")
+  FILTER(CONTAINS(LCASE(STR(?creatorFilterLabel)), "{artist}"))
+"""
+        else:
+            artist_filter = "  OPTIONAL { ?item wdt:P170 ?creator. }\n"
 
     return f"""
 SELECT ?item ?itemLabel ?creatorLabel ?image ?collectionLabel ?inventory ?date WHERE {{

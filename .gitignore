@@ -6,3 +6,26 @@ __pycache__/
 .env.*
 *.pyc
 
+# IDE
+.idea/
+
+# Claude Code local settings (machine-specific, not project config)
+frontend/.claude/
+
+# Ingest pipeline intermediate data (large files, not for version control)
+scripts/data/*.jsonl
+scripts/data/progress.json
+scripts/data/seen_ids.txt
+
+# Generated output files
+report.json
+
+# Development-phase documentation (will be replaced with final docs at release)
+docs/
+TODO_europeana.md
+api_reference_museums_wiki.md
+wiki_image_pipeline.md
+名画临摹应用_设计文档.md
+frontend/AGENTS.md
+frontend/CLAUDE.md
+

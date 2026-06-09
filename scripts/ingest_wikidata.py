@@ -133,13 +133,16 @@ _SPARQL_ARTISTS: list[str] = [
 # Q471571=Dürer  Q315=Bruegel  Q219908=Chardin
 
 _SPARQL_QUERY_TEMPLATE = """\
-SELECT DISTINCT ?item ?itemLabel ?creatorLabel ?image ?inception ?collectionLabel WHERE {{
+SELECT DISTINCT ?item ?itemLabel ?creatorLabel ?image ?inception \
+?collectionLabel ?movementLabel ?genreLabel WHERE {{
   VALUES ?artist {{ {qids} }}
   ?item wdt:P31 wd:Q3305213 ;
         wdt:P170 ?artist ;
         wdt:P18  ?image .
   OPTIONAL {{ ?item wdt:P571 ?inception }}
   OPTIONAL {{ ?item wdt:P195 ?collection }}
+  OPTIONAL {{ ?item wdt:P135 ?movement }}
+  OPTIONAL {{ ?item wdt:P136 ?genre }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" }}
 }}
 LIMIT 2000
@@ -418,6 +421,8 @@ def _normalize_sparql_binding(b: dict) -> dict | None:
 
     creator    = _sparql_label(b, "creatorLabel")
     collection = _sparql_label(b, "collectionLabel")
+    movement   = _sparql_label(b, "movementLabel")
+    genre      = _sparql_label(b, "genreLabel")
 
     inception = b.get("inception", {}).get("value", "")
     year: str | None = None
@@ -428,6 +433,10 @@ def _normalize_sparql_binding(b: dict) -> dict | None:
     metadata: dict = {}
     if collection:
         metadata["collection"] = collection
+    if movement:
+        metadata["movement"] = movement
+    if genre:
+        metadata["genre"] = genre
 
     return {
         "id":                   wikidata_id,

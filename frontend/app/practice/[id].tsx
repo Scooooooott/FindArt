@@ -530,6 +530,10 @@ export default function PracticeScreen() {
           </Text>
         </TouchableOpacity>
 
+        {/* TODO: Compare mode — upload a photo of your work alongside the original.
+            expo-image-picker to select user's painting photo, display side-by-side
+            or as a toggle with the original for progress comparison. */}
+
       </View>
     </View>
   )

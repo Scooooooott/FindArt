@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput,
   ActivityIndicator, Platform, KeyboardAvoidingView,
@@ -12,9 +12,11 @@ import { ThumbnailCard } from '../components/ThumbnailCard'
 import { ThumbnailRow } from '../components/ThumbnailRow'
 import { SkeletonCard } from '../components/SkeletonCard'
 import { useSearch } from '../hooks/useSearch'
+import { useImageSearch } from '../hooks/useImageSearch'
 import { useHistory } from '../hooks/useHistory'
 import { useFavourites } from '../hooks/useFavourites'
 import { useSessionId } from '../contexts/SessionContext'
+import { ImageSearchButton } from '../components/ImageSearchButton'
 import { colors } from '../constants/colors'
 import type { ArtworkCandidate, ArtworkQuery, HistoryEntry } from '../types/api'
 
@@ -86,6 +88,7 @@ export default function SearchScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [roundCount, setRoundCount] = useState(0)
   const [clarificationInput, setClarificationInput] = useState('')
+  const [imageMode, setImageMode] = useState(false)
 
   const {
     parsedQuery,
@@ -101,17 +104,25 @@ export default function SearchScreen() {
 
   const { history, clear: clearHistory, invalidate: invalidateHistory } = useHistory(sessionId)
   const { isFavourited, toggleFavourite } = useFavourites(sessionId)
+  const { candidates: imageCandidates, loading: imageLoading, error: imageError, pickAndSearch, clear: clearImage } = useImageSearch()
 
   const isLoading = intentLoading || candidatesLoading
   const fallbackMode = diagnostics?.fallback_mode ?? null
   const clarification = roundCount < MAX_CLARIFICATION_ROUNDS ? (rawClarification ?? null) : null
 
+  const displayCandidates = imageMode ? imageCandidates : candidates
+  const displayLoading = imageMode ? imageLoading : isLoading
+
+  useEffect(() => {
+    if (imageLoading || imageCandidates.length > 0) setImageMode(true)
+  }, [imageLoading, imageCandidates.length])
+
   const handleSearch = (text: string) => {
     setQuery(text)
     setRoundCount(0)
     setClarificationInput('')
-    // History is written server-side when the stream completes; invalidate
-    // the cache shortly after so the chips update without a manual refresh.
+    setImageMode(false)
+    clearImage()
     setTimeout(invalidateHistory, 4000)
   }
 
@@ -131,7 +142,9 @@ export default function SearchScreen() {
     })
   }
 
-  const toolbarLabel = intentLoading
+  const toolbarLabel = imageMode
+    ? (imageLoading ? 'Analyzing image...' : `${imageCandidates.length} artworks`)
+    : intentLoading
     ? 'Identifying...'
     : candidatesLoading
     ? 'Searching...'
@@ -144,41 +157,81 @@ export default function SearchScreen() {
     >
       {/* ── Header ── */}
       <View style={[styles.header, { paddingTop: Platform.OS === 'web' ? 56 : insets.top + 16 }]}>
-        <Text style={styles.logo}>FindArt</Text>
+        <View style={styles.logoRow}>
+          <Text style={styles.logo}>FindArt</Text>
+          <TouchableOpacity onPress={() => router.push('/explore')} activeOpacity={0.7}>
+            <Text style={styles.browseLink}>Browse →</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={styles.tagline}>Describe a painting to find its high-res original</Text>
-        <SearchBar onSearch={handleSearch} loading={isLoading} />
+        <View style={styles.searchRow}>
+          <View style={{ flex: 1 }}>
+            <SearchBar onSearch={handleSearch} loading={!imageMode && isLoading} />
+          </View>
+          <ImageSearchButton onPress={pickAndSearch} loading={imageLoading} active={imageMode} />
+        </View>
       </View>
 
       {/* ── Toolbar ── */}
-      {(candidates.length > 0 || isLoading) && (
+      {(displayCandidates.length > 0 || displayLoading) && (
         <View style={styles.toolbar}>
           <Text style={styles.resultCount}>{toolbarLabel}</Text>
+          {imageMode && (
+            <TouchableOpacity
+              style={styles.imageModeTag}
+              onPress={() => { setImageMode(false); clearImage() }}
+              hitSlop={{ top: 4, right: 4, bottom: 4, left: 4 }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.imageModeText}>Image search  ✕</Text>
+            </TouchableOpacity>
+          )}
           <ViewToggle mode={viewMode} onChange={setViewMode} />
         </View>
       )}
 
       {/* ── Results ── */}
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        {isError && (
+        {(isError || imageError != null) && (
           <View style={styles.stateBox}>
             <Text style={styles.stateIcon}>⚠️</Text>
             <Text style={styles.stateTitle}>Search failed</Text>
-            <Text style={styles.stateMsg}>{error?.message}</Text>
-            <TouchableOpacity style={styles.retryBtn} onPress={refetch}>
-              <Text style={styles.retryText}>Retry</Text>
+            <Text style={styles.stateMsg}>{(imageError ?? error)?.message}</Text>
+            {!imageMode && (
+              <TouchableOpacity style={styles.retryBtn} onPress={refetch}>
+                <Text style={styles.retryText}>Retry</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {imageMode && !imageLoading && imageCandidates.length === 0 && !imageError && (
+          <View style={styles.stateBox}>
+            <Text style={styles.stateIcon}>🖼</Text>
+            <Text style={styles.stateTitle}>No artworks found</Text>
+            <Text style={styles.stateMsg}>Try a different image, or search by text description</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={() => { setImageMode(false); clearImage() }}>
+              <Text style={styles.retryText}>Back to search</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {!isLoading && !isError && query.trim().length > 1 && candidates.length === 0 && (
+        {!imageMode && !isLoading && !isError && query.trim().length > 1 && candidates.length === 0 && (
           <View style={styles.stateBox}>
             <Text style={styles.stateIcon}>🔍</Text>
             <Text style={styles.stateTitle}>No matching artworks found</Text>
             <Text style={styles.stateMsg}>Try a different description — add artist, period, or style</Text>
+            <TouchableOpacity
+              style={styles.exploreBtn}
+              onPress={() => router.push('/explore')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.exploreBtnText}>Browse by Style</Text>
+            </TouchableOpacity>
           </View>
         )}
 
-        {!query && (
+        {!imageMode && !query && (
           <View>
             <View style={styles.stateBox}>
               <Text style={styles.stateIcon}>🎨</Text>
@@ -194,12 +247,12 @@ export default function SearchScreen() {
         )}
 
         {/* AI intent card — appears as soon as M1 returns, before candidates arrive */}
-        {parsedQuery && query.trim().length > 1 && (
+        {!imageMode && parsedQuery && query.trim().length > 1 && (
           <IntentCard parsedQuery={parsedQuery} loading={candidatesLoading} />
         )}
 
         {/* Fallback notice */}
-        {fallbackMode && candidates.length > 0 && (
+        {!imageMode && fallbackMode && candidates.length > 0 && (
           <View style={styles.fallbackNotice}>
             <Text style={styles.fallbackText}>No exact match — showing related artworks</Text>
           </View>
@@ -208,11 +261,11 @@ export default function SearchScreen() {
         {/* Grid view */}
         {viewMode === 'grid' && (
           <View style={styles.grid}>
-            {isLoading
+            {displayLoading
               ? Array.from({ length: SKELETON_COUNT }).map((_, i) => (
                   <SkeletonCard key={i} mode="grid" />
                 ))
-              : candidates.map(c => (
+              : displayCandidates.map(c => (
                   <ThumbnailCard
                     key={c.id}
                     candidate={c}
@@ -227,11 +280,11 @@ export default function SearchScreen() {
         {/* List view */}
         {viewMode === 'list' && (
           <View>
-            {isLoading
+            {displayLoading
               ? Array.from({ length: SKELETON_COUNT }).map((_, i) => (
                   <SkeletonCard key={i} mode="list" />
                 ))
-              : candidates.map(c => (
+              : displayCandidates.map(c => (
                   <ThumbnailRow
                     key={c.id}
                     candidate={c}
@@ -244,7 +297,7 @@ export default function SearchScreen() {
         )}
 
         {/* Clarification card */}
-        {clarification && !isLoading && (
+        {!imageMode && clarification && !isLoading && (
           <View style={styles.clarificationCard}>
             <Text style={styles.clarificationLabel}>A more specific description improves results</Text>
             <Text style={styles.clarificationQuestion}>{clarification.question}</Text>
@@ -290,16 +343,30 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: colors.border,
   },
+  logoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   logo: {
     fontSize: 26,
     fontWeight: '700',
     color: colors.textPrimary,
     letterSpacing: -0.5,
   },
+  browseLink: {
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
   tagline: {
     fontSize: 13,
     color: colors.textSecondary,
     marginBottom: 6,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   toolbar: {
     flexDirection: 'row',
@@ -314,6 +381,21 @@ const styles = StyleSheet.create({
   resultCount: {
     fontSize: 13,
     color: colors.textSecondary,
+    flex: 1,
+  },
+  imageModeTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: colors.accent,
+    borderRadius: 12,
+    marginRight: 8,
+  },
+  imageModeText: {
+    fontSize: 11,
+    color: colors.surface,
+    fontWeight: '600',
   },
   scroll: {
     flex: 1,
@@ -429,6 +511,18 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 14,
     fontWeight: '600',
+  },
+  exploreBtn: {
+    marginTop: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 7,
+  },
+  exploreBtnText: {
+    fontSize: 14,
+    color: colors.textSecondary,
   },
 })
 

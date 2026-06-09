@@ -137,8 +137,6 @@ def main() -> None:
             "Tip: run 'python scripts/ingest_wikidata.py sparql' to build the corpus."
         )
 
-    # ── Tier 3: Museum API seeding (auto-grows via pipeline._seed_new_candidates) ─
-
     count = client.count(collection_name=COLLECTION_NAME).count
     logger.info("Collection '%s' now has %d points total", COLLECTION_NAME, count)
 

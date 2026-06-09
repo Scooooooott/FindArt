@@ -17,7 +17,6 @@ from app.services.aggregation import aggregate_candidates
 from app.services.intent import IntentParser, create_intent_parser
 from app.services.museum import MuseumSearchService
 from app.services.vector_search import (
-    QdrantVectorSearchService,
     VectorSearchService,
     create_vector_search_service,
 )
@@ -60,7 +59,41 @@ class SearchPipeline:
             warnings=warnings,
             fallback_mode=fallback_mode,
         )
-        asyncio.create_task(_safe(self._seed_new_candidates(candidates)))
+        return SearchResponse(
+            request_id=request_id,
+            query=query,
+            candidates=candidates,
+            diagnostics=diagnostics,
+            clarification=clarification,
+        )
+
+    async def search_image(self, image_base64: str, mime_type: str, limit: int = 8) -> SearchResponse:
+        """Search by uploaded image. Requires LLMIntentParser (GEMINI_API_KEY)."""
+        parse_image_fn = getattr(self.intent_parser, 'parse_image', None)
+        if parse_image_fn is None:
+            raise RuntimeError(
+                "Image search requires a vision-capable intent parser. Set GEMINI_API_KEY."
+            )
+        request_id = str(uuid.uuid4())
+        timings: dict[str, float] = {}
+
+        t0 = time.perf_counter()
+        query = await parse_image_fn(image_base64, mime_type)
+        timings["intent_ms"] = _elapsed_ms(t0)
+
+        t1 = time.perf_counter()
+        candidates, fallback_mode, warnings = await self._retrieve(query, limit)
+        timings["retrieval_ms"] = _elapsed_ms(t1)
+        timings["total_ms"] = _elapsed_ms(t0)
+
+        clarification = _make_clarification(query, candidates)
+        diagnostics = SearchDiagnostics(
+            request_id=request_id,
+            timings_ms=timings,
+            providers=[*self.museum_search.provider_names, self.vector_search.name],
+            warnings=warnings,
+            fallback_mode=fallback_mode,
+        )
         return SearchResponse(
             request_id=request_id,
             query=query,
@@ -105,7 +138,6 @@ class SearchPipeline:
             clarification=clarification,
         )
         yield json.dumps({"type": "result", **response.model_dump()})
-        asyncio.create_task(_safe(self._seed_new_candidates(candidates)))
 
     async def _retrieve(
         self, query: ArtworkQuery, limit: int
@@ -163,20 +195,6 @@ class SearchPipeline:
 
         return candidates, fallback_mode, warnings
 
-    async def _seed_new_candidates(self, candidates: list[ArtworkCandidate]) -> None:
-        """Persist non-Wikidata M2 candidates to the vector index (fire-and-forget).
-
-        Runs in a thread so it never blocks the response path. Only active
-        when using persistent Qdrant (QdrantVectorSearchService); no-op in
-        memory/fallback mode. The stable point_id in seed_from_candidates
-        ensures the same painting from different sources is never duplicated.
-        """
-        if not isinstance(self.vector_search, QdrantVectorSearchService):
-            return
-        new = [c for c in candidates if c.source_api != "wikidata"]
-        if new:
-            await asyncio.to_thread(self.vector_search.seed_from_candidates, new)
-
     async def _keyword_split_retrieve(
         self,
         query: ArtworkQuery,
@@ -221,8 +239,8 @@ _DIMENSION_RULES: list[tuple[list[str], str]] = [
      "What art style or movement? E.g. Impressionism, Realism, Abstract..."),
 ]
 
-_CLARIFICATION_CONFIDENCE_MAX = 0.5
-_CLARIFICATION_CANDIDATES_MAX = 3
+_CLARIFICATION_CONFIDENCE_MAX = 0.65   # was 0.5 — too narrow; show hint up to medium confidence
+_CLARIFICATION_CANDIDATES_MAX = 5     # was 3 — 5+ good results means we don't need to ask
 
 
 def _dimension_to_question(dimension: str) -> str:

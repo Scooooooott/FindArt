@@ -10,7 +10,7 @@ from app.services.museum import candidate_from_catalog
 
 logger = logging.getLogger(__name__)
 
-COLLECTION_NAME = "artworks"
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "artworks_e5large")
 
 # intfloat/multilingual-e5-large (and the broader E5 family) requires
 # "passage: " prefix for documents and "query: " prefix for queries.
@@ -128,9 +128,15 @@ class QdrantVectorSearchService:
             existing_dim = info.config.params.vectors.size
             if existing_dim == self._dim:
                 return
+            if os.getenv("QDRANT_ALLOW_REBUILD", "false").lower() != "true":
+                raise RuntimeError(
+                    f"Qdrant collection '{COLLECTION_NAME}' has dim={existing_dim} but "
+                    f"model outputs dim={self._dim}. Set QDRANT_ALLOW_REBUILD=true to "
+                    "permit rebuild (destructive — all vectors will be lost)."
+                )
             logger.warning(
                 "Collection '%s' has dim=%d but model outputs dim=%d — "
-                "dropping and recreating. Re-run the ingest scripts.",
+                "dropping and recreating (QDRANT_ALLOW_REBUILD=true). Re-run the ingest scripts.",
                 COLLECTION_NAME, existing_dim, self._dim,
             )
             self._client.delete_collection(COLLECTION_NAME)

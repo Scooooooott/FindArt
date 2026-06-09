@@ -13,6 +13,7 @@ load_dotenv()  # Must run before any service reads env vars
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import StreamingResponse
@@ -36,6 +37,7 @@ from app.models import (
 )
 from app.services import session_service, style_transfer
 from app.services.image_resolver import ImageNotFoundError, ImageResolver
+from app.services.url_guard import validate_image_url
 from app.services.museum import build_museum_search_service
 from app.services.pipeline import SearchPipeline
 
@@ -90,6 +92,31 @@ app.add_middleware(
 
 pipeline = SearchPipeline(museum_search=build_museum_search_service(include_default=False))
 image_resolver = ImageResolver()
+
+# Vision pipeline — Gemini Vision for image-based search (shares museum/vector instances)
+_vision_pipeline: SearchPipeline | None = None
+_gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+if _gemini_key:
+    try:
+        from app.services.intent import LLMIntentParser as _LLMIntentParser
+        _vision_intent = _LLMIntentParser(
+            api_key=_gemini_key,
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        )
+        _vision_pipeline = SearchPipeline(
+            intent_parser=_vision_intent,
+            museum_search=pipeline.museum_search,
+            vector_search=pipeline.vector_search,
+        )
+        logger.info("Vision pipeline initialized (Gemini Vision)")
+    except Exception as _exc:
+        logger.warning("Vision pipeline unavailable: %s", _exc)
+
+
+class _ImageSearchRequest(BaseModel):
+    image_base64: str
+    mime_type: str = "image/jpeg"
+    limit: int = 8
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +246,32 @@ async def search_stream(
 
 
 # ---------------------------------------------------------------------------
+# Image search route
+# ---------------------------------------------------------------------------
+
+@app.post("/search/image")
+@limiter.limit("10/minute")
+async def search_by_image(request: Request, body: _ImageSearchRequest) -> SearchResponse:
+    """Search by uploaded image (Gemini Vision → ArtworkQuery → pipeline). Requires GEMINI_API_KEY."""
+    if _vision_pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Image search requires GEMINI_API_KEY to be configured",
+        )
+    try:
+        return await _vision_pipeline.search_image(body.image_base64, body.mime_type, body.limit)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # Style transfer routes
 # ---------------------------------------------------------------------------
 
 @app.post("/artworks/palette", responses=_R_STYLE)
 @limiter.limit("20/minute")
 async def extract_palette(request: Request, body: PaletteRequest) -> PaletteResponse:
+    validate_image_url(body.image_url)
     try:
         colors = await style_transfer.extract_palette(body.image_url, body.n_colors)
         return PaletteResponse(colors=colors)
@@ -237,6 +284,7 @@ async def extract_palette(request: Request, body: PaletteRequest) -> PaletteResp
 @app.post("/artworks/lineart", responses=_R_STYLE)
 @limiter.limit("10/minute")
 async def generate_lineart(request: Request, body: LineartRequest) -> LineartResponse:
+    validate_image_url(body.image_url)
     try:
         b64 = await style_transfer.generate_lineart(body.image_url, body.mode)
         return LineartResponse(lineart_b64=b64)
