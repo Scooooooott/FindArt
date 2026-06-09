@@ -1,0 +1,22 @@
+.git/
+.env
+.env.*
+.gitignore
+.semgrepignore
+.ruff_cache/
+.pytest_cache/
+.idea/
+__pycache__/
+*.pyc
+
+# Frontend assets are not needed in the backend image
+frontend/
+
+# Development docs and intermediate ingest data
+docs/
+scripts/data/
+report.json
+
+# Top-level config files not needed at runtime
+*.md
+railway.toml

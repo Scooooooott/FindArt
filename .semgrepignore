@@ -1,0 +1,4 @@
+# Developer-only ingestion scripts — urllib calls use hardcoded endpoints,
+# never user-controlled input. dynamic-urllib findings are false positives here.
+scripts/ingest_wikidata.py
+scripts/patch_artist.py
