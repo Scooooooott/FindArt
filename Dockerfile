@@ -16,11 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV HF_HOME=/app/hf_cache
 ENV SENTENCE_TRANSFORMERS_HOME=/app/hf_cache/sentence_transformers
 
-# Embedding model used by vector search (~560 MB)
+# Embedding model used by vector search (~560 MB, required at startup)
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-large')"
 
-# ControlNet LineartDetector used by /artworks/lineart?mode=fine (~1.4 GB)
-RUN python -c "from controlnet_aux import LineartDetector; LineartDetector.from_pretrained('lllyasviel/Annotators')"
+# LineartDetector (~1.4 GB) is NOT pre-baked to keep image under Railway's
+# size limit. It will be downloaded on the first /artworks/lineart?mode=fine
+# request and cached in the container for the lifetime of that deployment.
 
 COPY backend/ .
 
