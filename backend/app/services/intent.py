@@ -415,14 +415,17 @@ def create_intent_parser() -> DeepSeekIntentParser | LLMIntentParser | DefaultIn
     ds_model = os.getenv("DEEPSEEK_MODEL",   "deepseek-chat").strip()
     ds_url  = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
     if ds_key:
+        print(f"[intent] Using DeepSeek intent parser (model={ds_model})", flush=True)
         logger.info("Using DeepSeek intent parser (model=%s)", ds_model)
         return DeepSeekIntentParser(api_key=ds_key, model=ds_model, base_url=ds_url)
 
     gemini_key   = os.getenv("GEMINI_API_KEY", "").strip()
     gemini_model = os.getenv("GEMINI_MODEL",   "gemini-2.5-flash").strip()
     if gemini_key:
+        print(f"[intent] Using Gemini intent parser (model={gemini_model})", flush=True)
         logger.info("Using Gemini intent parser (model=%s)", gemini_model)
         return LLMIntentParser(api_key=gemini_key, model=gemini_model)
 
+    print("[intent] WARNING: No LLM API key set — using rule-based intent parser", flush=True)
     logger.info("No LLM API key set — using rule-based intent parser")
     return DefaultIntentParser()

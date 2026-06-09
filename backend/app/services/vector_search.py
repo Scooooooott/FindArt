@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import traceback
 import uuid
 from typing import Any, Protocol
 
@@ -112,6 +113,7 @@ class QdrantVectorSearchService:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
+            logger.error("sentence_transformers import failed:\n%s", traceback.format_exc())
             raise RuntimeError(
                 "sentence-transformers not installed. Run: pip install sentence-transformers"
             ) from exc
