@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from collections.abc import Sequence
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 from app.data.default_catalog import DEFAULT_CATALOG
 from app.models import ArtworkCandidate, ArtworkQuery
@@ -67,7 +70,12 @@ class MuseumSearchService:
         for adapter, result in zip(self.adapters, results, strict=False):
             if isinstance(result, Exception):
                 self.last_warnings.append(f"{adapter.name}_failed:{result}")
+                logger.warning(
+                    "[museum] Provider '%s' failed: %s",
+                    adapter.name, result, exc_info=result,
+                )
                 continue
+            logger.info("[museum] Provider '%s' returned %d candidates", adapter.name, len(result))
             candidates.extend(result)
         return candidates
 

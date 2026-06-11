@@ -47,8 +47,34 @@ logger = logging.getLogger(__name__)
 # Startup / shutdown
 # ---------------------------------------------------------------------------
 
+def _log_startup_env() -> None:
+    """Emit a single INFO line summarising which env vars are present."""
+    def _present(key: str) -> str:
+        val = os.getenv(key, "").strip()
+        if not val:
+            return "MISSING"
+        if "KEY" in key or "PASSWORD" in key or "SECRET" in key or "URL" in key:
+            return f"SET({len(val)}chars)"
+        return val
+
+    logger.info(
+        "Startup env — DEEPSEEK_API_KEY=%s  GEMINI_API_KEY=%s  "
+        "FINDART_PROVIDERS=%s  QDRANT_URL=%s  QDRANT_API_KEY=%s  "
+        "EMBEDDING_MODEL=%s  DATABASE_URL=%s",
+        _present("DEEPSEEK_API_KEY"),
+        _present("GEMINI_API_KEY"),
+        _present("FINDART_PROVIDERS"),
+        _present("QDRANT_URL"),
+        _present("QDRANT_API_KEY"),
+        _present("EMBEDDING_MODEL"),
+        _present("DATABASE_URL"),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _log_startup_env()
+
     db_url = os.getenv("DATABASE_URL", "").strip()
     if db_url:
         try:

@@ -254,39 +254,49 @@ class DefaultVectorSearchService:
 
 def create_vector_search_service() -> QdrantVectorSearchService | DefaultVectorSearchService:
     """Return QdrantVectorSearchService if dependencies are available, else the fallback."""
-    try:
-        from qdrant_client import QdrantClient
-    except ImportError:
-        logger.info("qdrant-client not installed — using keyword-based vector search fallback")
-        return DefaultVectorSearchService()
-
     model_name = os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()
     qdrant_url = os.getenv("QDRANT_URL", "").strip()
     qdrant_api_key = os.getenv("QDRANT_API_KEY", "").strip() or None
 
+    logger.info(
+        "[vector] EMBEDDING_MODEL=%s  QDRANT_URL=%s  QDRANT_API_KEY=%s  QDRANT_COLLECTION=%s",
+        model_name,
+        qdrant_url or "MISSING (in-memory)",
+        f"SET({len(qdrant_api_key)}chars)" if qdrant_api_key else "MISSING",
+        COLLECTION_NAME,
+    )
+
+    try:
+        from qdrant_client import QdrantClient
+    except ImportError:
+        logger.warning("[vector] qdrant-client not installed — using keyword-based vector search fallback")
+        return DefaultVectorSearchService()
+
     try:
         if qdrant_url:
             client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
-            logger.info("Connecting to Qdrant at %s", qdrant_url)
+            logger.info("[vector] Connecting to Qdrant at %s", qdrant_url)
         else:
             client = QdrantClient(":memory:")
-            logger.info("Using in-memory Qdrant (data will not persist across restarts)")
+            logger.info("[vector] Using in-memory Qdrant (data will not persist across restarts)")
 
+        logger.info("[vector] Loading embedding model: %s", model_name)
         service = QdrantVectorSearchService(client=client, model_name=model_name)
+        logger.info("[vector] Embedding model loaded, dim=%d", service._dim)
 
         count = client.count(collection_name=COLLECTION_NAME).count
         if count == 0 and os.getenv("FINDART_SEED_CATALOG", "").lower() in ("1", "true", "yes"):
             from app.data.default_catalog import DEFAULT_CATALOG
             n = service.seed_from_catalog(list(DEFAULT_CATALOG))
-            logger.info("Auto-seeded Qdrant with %d items from DEFAULT_CATALOG", n)
+            logger.info("[vector] Auto-seeded Qdrant with %d items from DEFAULT_CATALOG", n)
         else:
             logger.info(
-                "Qdrant collection has %d existing points (seed skipped unless FINDART_SEED_CATALOG=true)",
-                count,
+                "[vector] Qdrant collection '%s' has %d existing points",
+                COLLECTION_NAME, count,
             )
 
         return service
 
-    except Exception as exc:
-        logger.warning("Qdrant setup failed (%s) — falling back to keyword-based search", exc)
+    except Exception:
+        logger.warning("[vector] Qdrant setup failed — falling back to keyword-based search", exc_info=True)
         return DefaultVectorSearchService()

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+
+logger = logging.getLogger(__name__)
 
 from app.models import (
     ArtworkCandidate,
@@ -156,17 +159,26 @@ class SearchPipeline:
 
         if isinstance(museum_raw, Exception):
             warnings.append(f"museum_search_failed:{museum_raw}")
+            logger.warning("[pipeline] museum_search raised: %s", museum_raw, exc_info=museum_raw)
             museum_candidates: list[ArtworkCandidate] = []
         else:
             museum_candidates = museum_raw
             warnings.extend(self.museum_search.last_warnings)
 
+        if isinstance(vector_raw, Exception):
+            logger.warning("[pipeline] vector_search raised: %s", vector_raw, exc_info=vector_raw)
         vector_candidates: list[ArtworkCandidate] = (
             vector_raw if not isinstance(vector_raw, Exception) else []
         )
+
         candidates = aggregate_candidates([museum_candidates, vector_candidates], limit=limit)
+        logger.info(
+            "[pipeline] initial retrieval: museum=%d vector=%d merged=%d",
+            len(museum_candidates), len(vector_candidates), len(candidates),
+        )
 
         if len(candidates) < _THRESHOLD_RELAX:
+            logger.info("[pipeline] fallback relaxed_threshold (candidates=%d < %d)", len(candidates), _THRESHOLD_RELAX)
             relaxed_raw = await _safe(
                 self.vector_search.search(query, limit=limit, score_threshold=0.15)
             )
@@ -175,8 +187,10 @@ class SearchPipeline:
             if len(merged) > len(candidates):
                 candidates = merged
                 fallback_mode = "relaxed_threshold"
+                logger.info("[pipeline] relaxed_threshold improved results to %d", len(candidates))
 
         if len(candidates) < _THRESHOLD_RESTRICT:
+            logger.info("[pipeline] fallback field_restricted (candidates=%d < %d)", len(candidates), _THRESHOLD_RESTRICT)
             restricted_q = _restrict_query(query)
             restricted_raw = await _safe(
                 self.vector_search.search(restricted_q, limit=limit, score_threshold=0.2)
@@ -186,13 +200,20 @@ class SearchPipeline:
             if len(merged) > len(candidates):
                 candidates = merged
                 fallback_mode = "field_restricted"
+                logger.info("[pipeline] field_restricted improved results to %d", len(candidates))
 
         if len(candidates) < _THRESHOLD_SPLIT:
+            logger.info("[pipeline] fallback keyword_split (candidates=%d < %d)", len(candidates), _THRESHOLD_SPLIT)
             split = await self._keyword_split_retrieve(query, museum_candidates, limit)
             if len(split) > len(candidates):
                 candidates = split
                 fallback_mode = "keyword_split"
+                logger.info("[pipeline] keyword_split improved results to %d", len(candidates))
 
+        logger.info(
+            "[pipeline] _retrieve done: final=%d fallback_mode=%s warnings=%s",
+            len(candidates), fallback_mode, warnings or "none",
+        )
         return candidates, fallback_mode, warnings
 
     async def _keyword_split_retrieve(

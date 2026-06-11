@@ -164,12 +164,18 @@ class LLMIntentParser:
         cache_key = " ".join(text.split()).casefold()
         cached = self._cache.get(cache_key)
         if cached is not None:
+            logger.debug("Gemini intent cache hit for %r", text[:60])
             return cached
 
+        logger.info("Gemini intent parse: model=%s text_len=%d", self._model, len(text))
         try:
             result = await self._call_gemini(text)
-        except Exception as exc:
-            logger.warning("Gemini intent parse failed (%s), using fallback", exc)
+            logger.info(
+                "Gemini intent parse OK: title=%r artist=%r confidence=%.2f",
+                result.title, result.artist, result.confidence,
+            )
+        except Exception:
+            logger.warning("Gemini intent parse failed — using rule-based fallback", exc_info=True)
             result = await self._fallback.parse(text)
 
         self._cache.set(cache_key, result)
@@ -364,12 +370,18 @@ class DeepSeekIntentParser:
         cache_key = " ".join(text.split()).casefold()
         cached = self._cache.get(cache_key)
         if cached is not None:
+            logger.debug("DeepSeek intent cache hit for %r", text[:60])
             return cached
 
+        logger.info("DeepSeek intent parse: model=%s text_len=%d", self._model, len(text))
         try:
             result = await self._call_api(text)
-        except Exception as exc:
-            logger.warning("DeepSeek intent parse failed (%s), using fallback", exc)
+            logger.info(
+                "DeepSeek intent parse OK: title=%r artist=%r confidence=%.2f keywords=%s",
+                result.title, result.artist, result.confidence, result.keywords[:3],
+            )
+        except Exception:
+            logger.warning("DeepSeek intent parse failed — using rule-based fallback", exc_info=True)
             result = await self._fallback.parse(text)
 
         self._cache.set(cache_key, result)
@@ -414,6 +426,12 @@ def create_intent_parser() -> DeepSeekIntentParser | LLMIntentParser | DefaultIn
     ds_key  = os.getenv("DEEPSEEK_API_KEY",  "").strip()
     ds_model = os.getenv("DEEPSEEK_MODEL",   "deepseek-chat").strip()
     ds_url  = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip()
+    logger.info(
+        "[intent] DEEPSEEK_API_KEY=%s  DEEPSEEK_MODEL=%s  DEEPSEEK_BASE_URL=%s",
+        f"SET({len(ds_key)}chars)" if ds_key else "MISSING",
+        ds_model,
+        ds_url,
+    )
     if ds_key:
         print(f"[intent] Using DeepSeek intent parser (model={ds_model})", flush=True)
         logger.info("Using DeepSeek intent parser (model=%s)", ds_model)
@@ -421,11 +439,16 @@ def create_intent_parser() -> DeepSeekIntentParser | LLMIntentParser | DefaultIn
 
     gemini_key   = os.getenv("GEMINI_API_KEY", "").strip()
     gemini_model = os.getenv("GEMINI_MODEL",   "gemini-2.5-flash").strip()
+    logger.info(
+        "[intent] GEMINI_API_KEY=%s  GEMINI_MODEL=%s",
+        f"SET({len(gemini_key)}chars)" if gemini_key else "MISSING",
+        gemini_model,
+    )
     if gemini_key:
         print(f"[intent] Using Gemini intent parser (model={gemini_model})", flush=True)
         logger.info("Using Gemini intent parser (model=%s)", gemini_model)
         return LLMIntentParser(api_key=gemini_key, model=gemini_model)
 
     print("[intent] WARNING: No LLM API key set — using rule-based intent parser", flush=True)
-    logger.info("No LLM API key set — using rule-based intent parser")
+    logger.warning("[intent] No LLM API key set — using rule-based intent parser")
     return DefaultIntentParser()
