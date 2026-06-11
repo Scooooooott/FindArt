@@ -254,6 +254,10 @@ class DefaultVectorSearchService:
 
 def create_vector_search_service() -> QdrantVectorSearchService | DefaultVectorSearchService:
     """Return QdrantVectorSearchService if dependencies are available, else the fallback."""
+    if os.getenv("DISABLE_EMBEDDING_MODEL", "").lower() in ("1", "true", "yes"):
+        logger.warning("[vector] DISABLE_EMBEDDING_MODEL set — skipping model load, using keyword-based fallback")
+        return DefaultVectorSearchService()
+
     model_name = os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2").strip()
     qdrant_url = os.getenv("QDRANT_URL", "").strip()
     qdrant_api_key = os.getenv("QDRANT_API_KEY", "").strip() or None
