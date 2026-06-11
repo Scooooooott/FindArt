@@ -8,9 +8,11 @@ pytest>=8.0,<9.0
 google-genai>=0.3.0
 python-dotenv>=1.0.0
 qdrant-client>=1.6.0
-sentence-transformers>=2.6.0
+# sentence-transformers and controlnet-aux require torch (~1.5 GB RAM).
+# Re-enable after upgrading Railway to a plan with >= 2 GB RAM.
+# sentence-transformers>=2.6.0
+# controlnet-aux>=0.0.7
 opencv-python-headless>=4.8
-controlnet-aux>=0.0.7
 httpx>=0.27.0
 scikit-learn>=1.4.0
 Pillow>=10.0.0
